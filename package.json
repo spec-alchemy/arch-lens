@@ -1,8 +1,12 @@
 {
-  "name": "arch-lens",
+  "name": "@spec-alchemy/arch-lens",
   "version": "0.0.0-draft",
   "description": "Skill-first 的 PlantUML 业务建模与变更审查工作区",
-  "private": true,
+  "private": false,
+  "publishConfig": {
+    "access": "public",
+    "tag": "draft"
+  },
   "license": "EPL-2.0",
   "repository": {
     "type": "git",
@@ -31,6 +35,8 @@
     "src/",
     "templates/",
     ".agents/skills/arch-lens/",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ]

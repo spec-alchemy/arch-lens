@@ -37,3 +37,20 @@ test("公开基线只呈现当前产品入口和空的历史归档", () => {
   visit(path.join(root, ".arch-lens", "diagrams"));
   assert.equal(diagrams.length, 5);
 });
+
+test("npm 草案发布保持 scoped 包、draft 标签和稳定 CLI 名称", () => {
+  const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
+
+  assert.equal(packageJson.name, "@spec-alchemy/arch-lens");
+  assert.equal(packageJson.version, "0.0.0-draft");
+  assert.equal(packageJson.private, false);
+  assert.deepEqual(packageJson.publishConfig, {
+    access: "public",
+    tag: "draft",
+  });
+  assert.deepEqual(packageJson.bin, {
+    "arch-lens": "bin/arch-lens.js",
+  });
+  assert.ok(packageJson.files.includes("CHANGELOG.md"));
+  assert.ok(packageJson.files.includes("CONTRIBUTING.md"));
+});
