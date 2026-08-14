@@ -33,4 +33,4 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
       - run: npm pack --dry-run
 
-# 0.0.0-draft 尚未公开发布，因此本工作流有意不包含 npm publish。
+# 常规 CI 只验证可发布产物；npm 发布需要从受保护 main 显式执行。

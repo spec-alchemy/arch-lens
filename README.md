@@ -4,6 +4,21 @@ Arch Lens 是面向人类与 AI 协作的 Skill-first PlantUML 业务建模与�
 
 当前版本为 `0.0.0-draft`。产品仍在公开早期阶段，首个预览版本会单独定义兼容承诺。
 
+## 安装
+
+通过 npm 的 `draft` 标签安装当前公开草案，安装后的命令名为 `arch-lens`：
+
+```sh
+npm install -g @spec-alchemy/arch-lens@draft
+arch-lens capabilities --json
+```
+
+也可以不做全局安装，直接运行：
+
+```sh
+npx @spec-alchemy/arch-lens@draft capabilities --json
+```
+
 ## 当前能力
 
 - 使用可读、可编辑的 PlantUML 文件表达业务模型。
@@ -15,13 +30,12 @@ Arch Lens 是面向人类与 AI 协作的 Skill-first PlantUML 业务建模与�
 
 ## 快速开始
 
-需要 Node.js 20+、Java 21+ 和一个已有提交的 Git 仓库：
+需要 Node.js 20+、Java 21+ 和一个已有提交的 Git 仓库。使用全局安装后运行：
 
 ```sh
-npm ci
-node bin/arch-lens.js capabilities --json
-node bin/arch-lens.js init
-node bin/arch-lens.js diagrams check
+arch-lens capabilities --json
+arch-lens init
+arch-lens diagrams check
 ```
 
 `init` 会在用户缓存中安装并校验受管 PlantUML 运行时，然后创建项目级建模工作区。模型始终在本地处理，不上传到远程服务。
