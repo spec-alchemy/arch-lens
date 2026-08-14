@@ -44,9 +44,9 @@ test("packaged Skill routes semantic work through protocol 1 without AI self-app
   assert.match(metadata, /\$arch-lens/);
   assert.match(metadata, /smallest durable PlantUML view set/);
   const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
-  assert.match(readme, /持久建模默认一张主视图、通常最多三张/);
-  assert.match(readme, /第四张及以后.*人类明确同意/s);
-  assert.match(readme, /title.*不编码 Candidate、Draft、Approved 等工作流阶段/);
+  assert.match(readme, /最少必要的视图/);
+  assert.match(readme, /PlantUML 是唯一可编辑的业务模型/);
+  assert.match(readme, /设计批准和完成验收都来自人类明确决定/);
 });
 
 test("change new creates a fixed protocol 1 pack and rejects duplicate IDs", () => {
