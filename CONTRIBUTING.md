@@ -1,6 +1,6 @@
 # Contributing to Arch Lens
 
-Arch Lens 目前处于 `0.0.0-draft`。欢迎通过 issue 和 pull request 参与，但在首个稳定版本前，CLI、Skill、PlantUML 合同和 Change Pack 协议都可能发生不兼容变化。
+Arch Lens 目前处于 `0.0.0-draft`。欢迎通过 issue 和 pull request 参与；首个预览版本会明确 CLI、Skill、PlantUML 合同和 Change Pack 协议的兼容范围。
 
 ## 开发环境
 
@@ -23,7 +23,7 @@ npm pack --dry-run
 - 任何持久 `.puml` 修改必须进入 Change Pack。Skill 负责语义建模和审查；CLI 只验证文件、Git、摘要、Schema 和 PlantUML 事实。
 - 人类明确批准设计后，才可记录 design approval、应用候选模型并形成独立 model-only commit。
 - 实现完成后，AI 必须对照批准模型、代码 diff、测试和 AC 做语义审查；人类明确验收后才可记录 completion approval 并归档。
-- 不引入 XMI、自定义 DSL、Mermaid、D2、include、Markdown 业务模型或自研 Viewer。
+- PlantUML 文件保持自包含，并作为唯一可编辑业务模型；Change Pack 保存上下文和证据。
 
 ## 分支与合并
 

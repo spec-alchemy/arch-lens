@@ -4,5 +4,5 @@
 
 ## Unreleased
 
-- 公开 Arch Lens 的首个源码快照。
-- 产品仍处于 `0.0.0-draft`，尚未发布 npm 包，也不承诺 CLI、Skill、PlantUML 合同或 Change Pack 协议的向后兼容性。
+- Arch Lens 当前公开快照为 `0.0.0-draft`。
+- 后续预览版本会在此记录产品能力、兼容范围和升级说明。
