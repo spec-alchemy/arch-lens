@@ -1,8 +1,0 @@
-schemaVersion: 1
-workflowProtocol: 1
-id: constrain-view-generation
-baseCommit: 81e9f1f55b6c57cdc5372c8353cbfd1a5b3d3e0a
-createdAt: 2026-07-24T03:29:35.729Z
-diagrams:
-  - path: .arch-lens/diagrams/product-goals.use-case.puml
-    operation: modify
