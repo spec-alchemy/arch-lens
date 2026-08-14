@@ -1,0 +1,62 @@
+@startuml
+' arch-lens: type=sequence
+' arch-lens: question=init 如何在不依赖会话 PATH 的情况下安全建立可跨会话复用的 PlantUML 运行时？
+title 初始化受管 PlantUML 运行时
+
+actor "AI Agent / User" as User
+participant "Arch Lens CLI" as CLI
+participant "Repository Preflight" as Repo
+participant "Runtime Manager" as Runtime
+participant "Java 21+" as Java
+collections "用户运行时缓存" as Cache
+participant "PlantUML 官方 Release" as Release
+
+User -> CLI : init(repository)
+CLI -> Repo : 校验 Git HEAD、旧状态和工作区边界
+
+alt 仓库预检失败
+  Repo --> CLI : 事实诊断
+  CLI --> User : 拒绝且不安装、不写工作区
+else 仓库预检通过
+  CLI -> Runtime : ensureRuntime()
+  Runtime -> Java : headless 可执行性与版本检查
+
+  alt Java 缺失或低于 21
+    Java --> Runtime : 不兼容
+    Runtime --> CLI : 可操作错误
+    CLI --> User : 拒绝且不下载、不写工作区
+  else Java 可用
+    Runtime -> Runtime : 检查显式覆盖、受管缓存、PATH
+
+    alt 显式或 PATH 运行时满足版本门禁
+      Runtime -> Java : headless PlantUML 版本探测
+      Java --> Runtime : 1.2026.6+
+    else 受管 JAR 是摘要有效的真实普通文件
+      Runtime -> Java : headless PlantUML 版本探测
+      Java --> Runtime : 锁定版本
+    else 没有可用运行时或普通缓存已损坏
+      Runtime -> Release : 固定 HTTPS URL 下载（限制大小）
+      Release --> Runtime : JAR 字节流
+      Runtime -> Runtime : 校验固定 SHA-256
+      Runtime -> Cache : 临时文件写入 + fsync + 原子 rename
+      Runtime -> Java : 对已安装 JAR 做 headless 版本探测
+      Java --> Runtime : 锁定版本
+    end
+
+    alt 下载、摘要、缓存安全或版本检查失败
+      Runtime --> CLI : 删除临时文件并返回事实诊断
+      CLI --> User : 拒绝且不写工作区
+    else 运行时可用
+      Runtime --> CLI : version + source + cachePath
+      CLI -> Repo : 原子创建或同步 Arch Lens 资产
+      Repo --> CLI : workspace ready
+      CLI --> User : 初始化结果 + runtime 信息
+    end
+  end
+end
+
+note over Runtime,Release
+  只下载公开工具二进制，不发送 PlantUML 模型。
+  正常模型检查与渲染只读取本地缓存并通过 stdin 处理模型。
+end note
+@enduml

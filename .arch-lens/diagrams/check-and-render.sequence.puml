@@ -1,0 +1,55 @@
+@startuml
+' arch-lens: type=sequence
+' arch-lens: question=Change Pack 如何从已批准基线和候选 overlay 提供即时 diff 与可选 SVG 而不持久化第二份模型？
+title Change Pack 候选审查与按需渲染
+
+actor "AI Agent" as Agent
+participant "Arch Lens Skill" as Skill
+participant "Arch Lens CLI" as CLI
+collections "Change Pack" as Change
+participant "Git" as Git
+collections "已批准 diagrams" as Approved
+collections "候选 diagrams overlay" as Candidate
+participant "受管 PlantUML" as PlantUML
+collections "Change Pack rendered\n可选、Git 忽略、仅 SVG" as Output
+
+Agent -> Skill : review model(changeId)
+Skill -> CLI : capabilities()
+CLI --> Skill : workflowProtocol + features
+Skill -> CLI : change diff(changeId)
+CLI -> Change : 读取 baseCommit 与 diagram operations
+CLI -> Git : 读取 baseCommit 中的已批准 PlantUML
+CLI -> Candidate : 读取 add/modify overlay
+CLI -> CLI : 校验路径、Schema、元数据和唯一载体边界
+
+loop 每个声明的 add/modify/delete 图
+  CLI -> CLI : 按 operation 组合 base 与 overlay
+  CLI -> CLI : 检查离线资源与 PlantUML 合同
+end
+
+alt 结构、Git 或离线策略失败
+  CLI --> Skill : 结构化事实诊断，不写文件
+else 策略通过
+  CLI --> Skill : stdout/JSON 文本 diff，不持久化
+
+  opt 人类或 Agent 需要导出 SVG
+    Skill -> CLI : change render(changeId)
+    CLI -> PlantUML : 一次 headless -tsvg -pipe（SANDBOX）
+    PlantUML --> CLI : overlay 同序 SVG 字节流
+    alt 渲染失败或输出协议异常
+      CLI --> Skill : 文件级诊断，不留下部分 rendered
+    else 渲染完整成功
+      CLI -> Output : 原子替换严格镜像 SVG
+      CLI --> Skill : SVG 路径
+    end
+  end
+end
+
+Skill -> Skill : 判断跨图一致性、设计取舍和未决风险
+Skill --> Agent : 可视化、diff、理由与语义审查结论
+
+note over Approved,Output
+  顶层 diagrams 是已批准模型，Change Pack diagrams 是未批准候选。
+  rendered 只在显式请求时出现，并且只包含同路径 SVG。
+end note
+@enduml

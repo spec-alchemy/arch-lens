@@ -1,0 +1,29 @@
+schemaVersion: 1
+workflowProtocol: 1
+design:
+  - reviewer: tella
+    recordedAt: 2026-07-27T09:01:15.720Z
+    digest: a773cf99bbe477e2a5540044993be444f455754abd42d37ef266062ac592f5ed
+    baseCommit: 03e469b16b689ceef2d943131ff72a9d2bcd9cb3
+    artifacts:
+      - path: .arch-lens/changes/clean-model-lifecycle-labels/change.yaml
+        sha256: 09191eedadd38dc5be7afff55ca94762987e60a769b7e6ad19fd7384a721e127
+      - path: .arch-lens/changes/clean-model-lifecycle-labels/decisions.md
+        sha256: 8351b82fae66f1d3bd95d356bf04577fe68b860c076c6694b96e032af39cc893
+      - path: .arch-lens/changes/clean-model-lifecycle-labels/proposal.md
+        sha256: a47672356a3763889286db4c7614a0d4707631691d123011ccecdb1fd0765208
+      - path: .arch-lens/diagrams/initialize-managed-runtime.sequence.puml
+        sha256: 2f82fc6de0464306a514d5d908abd86405694636977328c56ce49fa4e14153f2
+      - path: .arch-lens/diagrams/product-goals.use-case.puml
+        sha256: ab1da3b51e2344db3cac240b30b6cdcfe48799088f7c4077dfc3ea016bd35863
+      - path: .arch-lens/principles.md
+        sha256: 90fd7a2d68c8be42bfa900ac46f23c523ae51fe9d45bd8ac4a985ca32889f9eb
+completion:
+  - reviewer: tella
+    recordedAt: 2026-07-27T10:44:07.563Z
+    digest: 16721cd06f329c12e420539f8721c7db83e3dfda782655d88d00cbaca9516268
+    designDigest: a773cf99bbe477e2a5540044993be444f455754abd42d37ef266062ac592f5ed
+    implementationCommit: 99234980e33805ac3f796dd0256a9a735046f96f
+    reviewedImplementationCommit: 787468afdeabb4404574fd3ada45718f8d0f3f3e
+    tasksSha256: 00a144e5953d854086a10876b92ef461915f4234b100b65e4fb67cec359b0290
+    verificationSha256: bae3778362758cb5ff2f5f93356c91fc2dfd2f16dac34024ee8063f4a4f307b4

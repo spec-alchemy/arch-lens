@@ -1,0 +1,57 @@
+@startuml
+' arch-lens: type=use-case
+' arch-lens: question=人类审查者与 AI Agent 如何在保持决策价值的同时控制持久 UML 模型集规模？
+title Arch Lens 精简建模目标与产品边界
+!pragma layout smetana
+left to right direction
+
+actor "人类审查者" as Reviewer
+actor "AI Agent" as Agent
+actor "本地 PlantUML" as PlantUML <<external tool>>
+
+rectangle "Arch Lens" {
+  usecase "建立精简、可理解的\n业务模型" as ModelBusiness
+  usecase "审查并批准\n候选设计" as ApproveDesign
+  usecase "审查并验收\n实现结果" as AcceptImplementation
+  usecase "维护 PlantUML\n唯一业务模型" as MaintainDiagrams
+  usecase "维护变更上下文\n与验证证据" as MaintainChange
+  usecase "检查图集合同\n与 UML 语法" as CheckDiagrams
+  usecase "生成按需\n审查材料" as BuildReviewMaterial
+  usecase "记录人工批准\n与归档事实" as RecordApproval
+  usecase "安装 Agent\n建模指南" as InstallSkill
+}
+
+Reviewer -- ModelBusiness
+Reviewer -- ApproveDesign
+Reviewer -- AcceptImplementation
+Agent -- ModelBusiness
+Agent -- MaintainDiagrams
+Agent -- MaintainChange
+Agent -- InstallSkill
+
+CheckDiagrams ..> PlantUML : 本地语法检查
+BuildReviewMaterial ..> PlantUML : 本地 SVG 渲染
+ApproveDesign ..> BuildReviewMaterial : <<include>>
+ApproveDesign ..> RecordApproval : <<include>>
+AcceptImplementation ..> MaintainChange : <<include>>
+AcceptImplementation ..> RecordApproval : <<include>>
+MaintainDiagrams ..> CheckDiagrams : <<include>>
+
+note right of ModelBusiness
+  默认一张主视图，通常最多三张。
+  优先修改已有图并合并相近场景。
+  第四张起逐张说明独立判断价值，
+  生成前由人类明确同意额外成本。
+end note
+
+note right of RecordApproval
+  CLI 只记录已经发生的人工决定。
+  AI 不得自行批准设计或实现。
+end note
+
+note bottom of MaintainChange
+  Change Pack 不复制业务模型：
+  它只保存问题、范围、取舍、
+  任务、批准和验证证据。
+end note
+@enduml

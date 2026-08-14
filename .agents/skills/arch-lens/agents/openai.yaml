@@ -1,0 +1,4 @@
+interface:
+  display_name: "Arch Lens"
+  short_description: "用精简 PlantUML 建模并闭环审查业务与职责变更"
+  default_prompt: "Use $arch-lens to propose the smallest durable PlantUML view set, obtain human design approval, and verify the implementation against the approved model."

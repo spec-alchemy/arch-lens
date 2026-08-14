@@ -1,0 +1,59 @@
+@startuml
+' arch-lens: type=component
+' arch-lens: question=Skill、CLI、受管 PlantUML 运行时、Git 与持久资产如何分工并防止语义判断下沉？
+title Arch Lens Skill-first 运行时职责与接口
+!pragma layout smetana
+top to bottom direction
+
+actor "人类审查者" as Reviewer
+component "AI Agent" as Agent
+
+package "Arch Lens npm 包" {
+  component "Deterministic CLI" as CLI
+  component "Runtime Manager" as RuntimeManager
+  component "Modeling & Review Skill" as Skill
+}
+
+artifact "用户缓存\nPlantUML 1.2026.6 JAR" as ManagedPlantUML
+component "Git" as Git <<external tool>>
+file ".arch-lens/principles.md\n项目原则" as Principles
+folder ".arch-lens/diagrams\nPlantUML 图集" as Diagrams
+folder ".arch-lens/changes\nChange Pack" as Changes
+artifact ".arch-lens/rendered SVG\n工作区内、Git 忽略" as SVG
+
+Agent --> Skill : 执行理解、提案、建模、\n语义审查和实现审查
+Skill --> CLI : 调用确定性辅助命令
+CLI --> RuntimeManager : init 时确保运行时可用
+RuntimeManager --> ManagedPlantUML : 安装、校验和自动发现
+Skill --> Principles : 遵循项目约束
+Skill --> Diagrams : 读写唯一业务模型
+Skill --> Changes : 维护问题、取舍、任务和证据
+CLI --> Diagrams : 路径、元数据、摘要和语法事实
+CLI --> Changes : Schema、引用、摘要、审批和归档事实
+CLI --> Git : HEAD、diff、commit 和工作区事实
+CLI --> ManagedPlantUML : 自动发现、完整性与版本门禁
+ManagedPlantUML --> SVG : 生成标准可视化
+Reviewer --> SVG : 视觉判断
+Reviewer --> Diagrams : 审查文本 diff
+Reviewer --> Changes : 批准设计与验收实现
+
+note bottom of CLI
+  只输出可由文件、Git、摘要或 PlantUML 确定的事实
+  不选择视图、不评价设计、不批准变更
+  不维护第二份业务模型或自研 Viewer
+  不通过系统包管理器或远程服务处理模型
+end note
+
+note bottom of RuntimeManager
+  运行时只进入用户缓存，不进入项目仓库
+  从锁定官方 Release 下载并校验 SHA-256
+  通过 Java 21+ 执行 headless 版本探测
+  显式 ARCH_LENS_PLANTUML 仍可覆盖默认解析
+  下载、摘要或版本失败时不写工作区
+end note
+
+note bottom of Skill
+  负责业务语义和跨资产一致性判断
+  未获得人类明确授权时不得记录批准
+end note
+@enduml

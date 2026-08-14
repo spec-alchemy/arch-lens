@@ -1,0 +1,54 @@
+@startuml
+' arch-lens: type=activity
+' arch-lens: question=一个架构敏感变更如何经过建模、双人工关卡、实现验证和归档？
+title Arch Lens Change Pack 完整闭环
+
+|AI Agent|
+start
+:检查 CLI workflowProtocol 和 capabilities;
+:创建 Change Pack;
+:收集事实并澄清问题、范围和验收标准;
+:选择最少必要 PlantUML 视图;
+
+repeat
+  |AI Agent|
+  :在 Change Pack diagrams 中修改候选 .puml overlay;
+  :记录提案、决策和未决问题;
+  :执行结构、语法和 Git 事实校验;
+  :读取即时文本 diff;
+  if (需要导出 SVG 审查？) then ([是])
+    :按相对路径镜像生成候选 SVG;
+  else ([否])
+    :使用编辑器直接预览 .puml;
+  endif
+  :执行跨图和方案语义审查;
+  |人类审查者|
+  :查看 .puml 预览或 SVG、diff、理由、风险和问题;
+repeat while (设计需要修改？) is ([是]) not ([否])
+:明确批准候选设计;
+
+|确定性 CLI|
+:记录设计批准及内容摘要;
+:原子提升候选 overlay 到已批准顶层图集;
+|AI Agent|
+:提交 model-only commit;
+:确认批准摘要仍然有效;
+:实施架构敏感代码;
+:运行项目测试和契约验证;
+:逐项核对 AC、模型、代码 diff 和证据;
+
+if (实现推翻了已批准设计？) then ([是])
+  :使旧批准变为 stale;
+  :在 Change Pack diagrams 中重新形成候选 .puml overlay;
+  :结束当前实施回合并返回设计审查;
+  stop
+else ([否])
+  :提交实现与验证证据;
+endif
+
+|人类审查者|
+:审查并明确验收实现结果;
+|确定性 CLI|
+:记录完成批准并原子归档 Change Pack;
+stop
+@enduml

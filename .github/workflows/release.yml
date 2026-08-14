@@ -1,0 +1,36 @@
+name: Verify Arch Lens draft
+
+permissions:
+  contents: read
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - run: npm test
+      - name: Verify workflow protocol contract
+        run: node bin/arch-lens.js capabilities --json
+      - name: Install and verify the managed PlantUML runtime
+        run: node bin/arch-lens.js init --json
+      - name: Validate cross-process managed runtime discovery and render repository diagrams
+        run: |
+          node bin/arch-lens.js diagrams check
+          node bin/arch-lens.js diagrams render --output "$RUNNER_TEMP/arch-lens-rendered"
+          test -z "$(git status --porcelain --untracked-files=all)"
+      - run: npm pack --dry-run
+
+# 0.0.0-draft 尚未公开发布，因此本工作流有意不包含 npm publish。
