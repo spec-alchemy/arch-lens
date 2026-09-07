@@ -5,7 +5,7 @@ description: 使用 PlantUML 帮助人类与 AI 理解和设计软件中的业�
 
 # Arch Lens
 
-以 Skill 作为语义工作流，以 CLI 作为确定性辅助工具。把 PlantUML 作为唯一业务模型：顶层 `.arch-lens/diagrams/**/*.puml` 是已批准模型，活动 Change Pack 的 `diagrams/**/*.puml` 是待批准 overlay，归档不保留模型副本。
+以 Skill 作为语义工作流，以 CLI 作为确定性辅助工具。把 PlantUML 作为唯一业务模型：顶层 `.arch-lens/diagrams/**/*.puml` 是已批准模型，活动 Change Pack 的 `diagrams/**/*.puml` 是待批准 overlay；相邻层级的 `rendered/**/*.svg` 是受版本控制、不可手工维护的派生审查产物。
 
 ## 开始工作
 
@@ -15,13 +15,14 @@ description: 使用 PlantUML 帮助人类与 AI 理解和设计软件中的业�
 arch-lens capabilities --json
 ```
 
-只在 `workflowProtocol` 为 `1` 且包含 `plantuml-batch-render`、`change-pack-v1`、`approval-digest-v1`、`completion-approval-v1`、`managed-plantuml-runtime-v1` 和 `change-overlay-v1` 时继续。不兼容时停止写入并说明应更新 CLI 或项目 Skill。
+只在 `workflowProtocol` 为 `1` 且包含 `plantuml-batch-render`、`change-pack-v1`、`approval-digest-v1`、`completion-approval-v1`、`managed-plantuml-runtime-v1`、`change-overlay-v1`、`single-active-change-v1`、`model-baseline-freshness-v1`、`tracked-svg-mirror-v1`、`svg-facts-v1` 和 `visual-review-gate-v1` 时继续。不兼容时停止写入并说明应更新 CLI 或项目 Skill。
 
 1. 确认仓库已有有效 HEAD；缺少 protocol 1 工作区时，只在允许初始化的干净状态运行 `arch-lens init`。
-2. 读取 `.arch-lens/principles.md`、现有图集，以及 `references/modeling-guide.md`。
-3. 创建或修改 PlantUML 时读取 `references/plantuml-contract.md`。
-4. 创建或推进变更时读取 `references/change-pack-contract.md` 和对应 workflow。
-5. 先写出问题，再选择最少必要视图；不要为了资产齐全而画图。
+2. 确认每个 Git worktree 最多一个活动 Change Pack；并行工作必须拆到独立 branch/worktree，进入目标分支时逐个集成。
+3. 读取 `.arch-lens/principles.md`、现有图集，以及 `references/modeling-guide.md`。
+4. 创建或修改 PlantUML 时读取 `references/plantuml-contract.md`。
+5. 创建或推进变更时读取 `references/change-pack-contract.md` 和对应 workflow。
+6. 先写出问题，再选择最少必要视图；不要为了资产齐全而画图。
 
 ## 视图预算
 
@@ -48,9 +49,12 @@ arch-lens capabilities --json
 - 不手工编辑 `approval.yaml`，不把 CLI 命令命名为 review、approve 或 verify，也不让脚本模拟语义判断。
 - 设计摘要 stale 时返回模型审查；实现推翻设计时更新 `.puml` 并重新批准。
 - 顶层图集只保存批准模型；新增和修改候选写入 Change Pack overlay，删除只写入 change.yaml。
+- add/modify `.puml` 必须通过标准 render 产生同步 SVG；delete 必须同时删除 `.puml`/SVG。设计摘要和 model-only commit 同时绑定二者。
+- `baseCommit` 后若已批准模型基线变化，必须先同步 Git、显式运行 `change refresh-base` 并重新审查；不得自动刷新绕过 stale 状态。
+- 每张当前 SVG 的视觉审查必须记录为 PASS、CONCERNS 或 FAIL；任一 add/modify 图不是 PASS 时不得请求或记录设计批准。
 - 未获人类超额授权时不得生成第四张候选图，也不得先生成后用沉没成本证明其必要性。
 - 不引入 XMI、自定义 DSL、Mermaid、D2、`.iuml`、include、Markdown 业务模型或自研 Viewer。
 
 ## 人类审查出口
 
-向人类提供 `.puml` 文本 diff、可用的本地预览入口、每张图的问题、设计理由、证据、风险和未决问题。VS Code/JetBrains 本地预览是一等路径；只有需要独立文件审查时才生成 SVG。不要只报告 `validate` 通过。实现后还要提供逐项 AC 结果、代码与测试证据、语义一致性结论和残余风险。
+向人类提供 `.puml` 文本 diff、标准 SVG、本地预览入口、每张图的问题、设计理由、证据、风险和未决问题。逐张打开当前 SVG 并检查标签裁切/重叠、交叉线、密度、边界和阅读顺序，记录 PASS/CONCERNS/FAIL；CLI 的尺寸和宽高比事实只用于提示风险。不要只报告 `validate` 通过。实现后还要提供逐项 AC 结果、代码与测试证据、语义一致性结论和残余风险。

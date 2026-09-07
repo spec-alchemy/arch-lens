@@ -18,6 +18,9 @@ test("packaged Skill routes semantic work through protocol 1 without AI self-app
   assert.match(skill, /唯一业务模型/);
   assert.match(skill, /默认只生成或修改一张主视图，通常最多三张/);
   assert.match(skill, /第四张及以后.*人类明确同意/s);
+  assert.match(skill, /每个 Git worktree 最多一个活动 Change Pack/);
+  assert.match(skill, /受版本控制.*标准.*SVG/s);
+  assert.match(skill, /CONCERNS.*FAIL.*不得请求或记录设计批准/s);
   assert.match(skill, /不按 AC、测试案例、接口或相近场景逐图生成/);
   assert.equal(fs.existsSync(path.join(skillRoot, "workflows/change.md")), false);
   for (const file of ["understand.md", "propose-change.md", "review-model.md", "apply-change.md", "review-implementation.md", "close-change.md"]) {
@@ -27,6 +30,8 @@ test("packaged Skill routes semantic work through protocol 1 without AI self-app
   assert.match(contract, /CLI 只做事实/);
   assert.match(contract, /tasks\.md.*不绑定/s);
   assert.match(contract, /避免 commit 哈希自引用/);
+  assert.match(contract, /change refresh-base/);
+  assert.match(contract, /viewBox.*宽高.*宽高比/);
   const modelingGuide = fs.readFileSync(path.join(skillRoot, "references/modeling-guide.md"), "utf8");
   assert.match(modelingGuide, /视图预算与复用/);
   assert.match(modelingGuide, /图种.*选择菜单|不能因为指南列出了六种图就各画一张/s);
@@ -62,7 +67,7 @@ test("change new creates a fixed protocol 1 pack and rejects duplicate IDs", () 
   assert.deepEqual(parse(fs.readFileSync(path.join(pack, "approval.yaml"), "utf8")).design, []);
 
   assertJsonError(run(cwd, "change", "new", "Upper_Case", "--json"), /kebab-case/);
-  assertJsonError(run(cwd, "change", "new", "retry-policy", "--json"), /已存在/);
+  assertJsonError(run(cwd, "change", "new", "retry-policy", "--json"), /已有活动 Change Pack/);
   const status = run(cwd, "change", "status", "--json");
   assert.equal(status.status, 0, status.stderr);
   assert.deepEqual(JSON.parse(status.stdout).changes.map((item) => item.id), ["retry-policy"]);
@@ -93,7 +98,7 @@ test("change validate, diff and render cover isolated add, modify and delete ove
   const diff = JSON.parse(diffed.stdout);
   assert.deepEqual(diff.files.map((item) => item.operation), ["modify", "delete", "add"]);
   assert.match(diff.patch, /modify\.domain\.puml/);
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/changes/reshape-domain/rendered")), false);
+  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/changes/reshape-domain/rendered")), true);
 
   const rendered = run(cwd, "change", "render", "reshape-domain", "--json", { ARCH_LENS_PLANTUML: fake });
   assert.equal(rendered.status, 0, rendered.stderr || rendered.stdout);
@@ -114,36 +119,37 @@ test("change validate, diff and render cover isolated add, modify and delete ove
   const manifest = parse(fs.readFileSync(manifestPath, "utf8"));
   manifest.diagrams = manifest.diagrams.filter((item) => item.path !== ".arch-lens/diagrams/new/add.domain.puml");
   fs.writeFileSync(manifestPath, stringify(manifest, { lineWidth: 0 }));
+  fs.writeFileSync(path.join(cwd, ".arch-lens/changes/reshape-domain/decisions.md"), decisionsText(manifest.diagrams));
   fs.rmSync(path.join(cwd, ".arch-lens/changes/reshape-domain/diagrams/new/add.domain.puml"));
+  fs.rmSync(path.join(cwd, ".arch-lens/changes/reshape-domain/rendered/new/add.domain.svg"));
   const refreshed = run(cwd, "change", "render", "reshape-domain", "--json", { ARCH_LENS_PLANTUML: fake });
   assert.equal(refreshed.status, 0, refreshed.stderr || refreshed.stdout);
   assert.equal(fs.existsSync(path.join(cwd, view.output, "new/add.domain.svg")), false);
 });
 
-test("active Change Packs reject overlapping PlantUML ownership", () => {
+test("a worktree rejects a second active Change Pack before writing assets", () => {
   const cwd = protocolRepo();
   assert.equal(run(cwd, "change", "new", "first-change", "--json").status, 0);
   writeCandidate(cwd, "first-change", "shared/domain.puml", "Shared");
   preparePack(cwd, "first-change", [{ path: ".arch-lens/diagrams/shared/domain.puml", operation: "add" }]);
-  commitAll(cwd, "first active pack");
-  assert.equal(run(cwd, "change", "new", "second-change", "--json").status, 0);
-  preparePack(cwd, "second-change", [{ path: ".arch-lens/diagrams/shared/domain.puml", operation: "add" }]);
-  assertJsonDiagnostic(run(cwd, "change", "validate", "second-change", "--json", { ARCH_LENS_PLANTUML: fakePlantUml() }), "DIAGRAM_CHANGE_CONFLICT");
+  const rejected = run(cwd, "change", "new", "second-change", "--json");
+  assertJsonError(rejected, /独立 branch\/worktree/);
+  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/changes/second-change")), false);
 });
 
-test("change new allows dirty disjoint active packs but rejects implementation or canonical model dirt", () => {
+test("change new requires no active pack and a clean worktree", () => {
   const cwd = protocolRepo();
   assert.equal(run(cwd, "change", "new", "first-change", "--json").status, 0);
   writeCandidate(cwd, "first-change", "one/domain.puml", "One");
   preparePack(cwd, "first-change", [{ path: ".arch-lens/diagrams/one/domain.puml", operation: "add" }]);
-  const second = run(cwd, "change", "new", "second-change", "--json");
-  assert.equal(second.status, 0, second.stderr || second.stdout);
+  assertJsonError(run(cwd, "change", "new", "second-change", "--json"), /已有活动 Change Pack/);
 
-  fs.writeFileSync(path.join(cwd, "implementation.js"), "export {};\n");
-  assertJsonError(run(cwd, "change", "new", "third-change", "--json"), /implementation\.js/);
-  fs.rmSync(path.join(cwd, "implementation.js"));
-  writeDiagram(cwd, "unapproved/domain.puml", "Unapproved");
-  assertJsonError(run(cwd, "change", "new", "third-change", "--json"), /unapproved\/domain\.puml/);
+  const clean = protocolRepo();
+  fs.writeFileSync(path.join(clean, "implementation.js"), "export {};\n");
+  assertJsonError(run(clean, "change", "new", "third-change", "--json"), /implementation\.js/);
+  fs.rmSync(path.join(clean, "implementation.js"));
+  writeDiagram(clean, "unapproved/domain.puml", "Unapproved");
+  assertJsonError(run(clean, "change", "new", "third-change", "--json"), /unapproved\/domain\.puml/);
 });
 
 test("delete-only Change Packs can be approved and applied without candidate files", () => {
@@ -160,6 +166,7 @@ test("delete-only Change Packs can be approved and applied without candidate fil
   const applied = run(cwd, "change", "apply-model", "remove-obsolete", "--json");
   assert.equal(applied.status, 0, applied.stderr || applied.stdout);
   assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/obsolete/domain.puml")), false);
+  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/rendered/obsolete/domain.svg")), false);
   assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/.gitkeep")), true);
   assert.equal(statusFor(cwd, "remove-obsolete").designApproval.state, "current");
 });
@@ -242,6 +249,7 @@ test("change render refuses a symlinked generated-output directory", () => {
   writeCandidate(cwd, "safe-render", "safe/domain.puml", "Safe");
   preparePack(cwd, "safe-render", [{ path: ".arch-lens/diagrams/safe/domain.puml", operation: "add" }]);
   const external = tempDir();
+  fs.rmSync(path.join(cwd, ".arch-lens/changes/safe-render/rendered"), { recursive: true, force: true });
   fs.symlinkSync(external, path.join(cwd, ".arch-lens/changes/safe-render/rendered"));
   assertJsonDiagnostic(run(cwd, "change", "render", "safe-render", "--json", { ARCH_LENS_PLANTUML: fakePlantUml() }), "ARTIFACT_SYMLINK");
   assert.deepEqual(fs.readdirSync(external), []);
@@ -260,6 +268,8 @@ test("design digest, model-only commit, evidence, completion approval and archiv
   assert.equal(approved.status, 0, approved.stderr || approved.stdout);
   const designDigest = JSON.parse(approved.stdout).digest;
   assert.match(designDigest, /^[0-9a-f]{64}$/);
+  const approval = parse(fs.readFileSync(path.join(cwd, ".arch-lens/changes/notification-policy/approval.yaml"), "utf8"));
+  assert.ok(approval.design.at(-1).artifacts.some((item) => item.path === ".arch-lens/rendered/notification/policy.state.svg" && /^[0-9a-f]{64}$/.test(item.sha256)));
   assert.equal(statusFor(cwd, "notification-policy").designApproval.modelApplied, false);
 
   const pack = path.join(cwd, ".arch-lens/changes/notification-policy");
@@ -277,11 +287,22 @@ test("design digest, model-only commit, evidence, completion approval and archiv
   assert.equal(statusFor(cwd, "notification-policy").designApproval.state, "stale");
   fs.writeFileSync(principles, principlesText());
   assert.equal(statusFor(cwd, "notification-policy").designApproval.state, "current");
+  const approvedSvg = path.join(pack, "rendered/notification/policy.state.svg");
+  const approvedSvgBytes = fs.readFileSync(approvedSvg);
+  fs.appendFileSync(approvedSvg, "\n");
+  assert.equal(statusFor(cwd, "notification-policy").designApproval.state, "stale");
+  fs.writeFileSync(approvedSvg, approvedSvgBytes);
+  assert.equal(statusFor(cwd, "notification-policy").designApproval.state, "current");
+  fs.rmSync(approvedSvg);
+  assertJsonDiagnostic(run(cwd, "change", "apply-model", "notification-policy", "--json"), "SVG_MISSING");
+  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/notification/policy.state.puml")), false);
+  fs.writeFileSync(approvedSvg, approvedSvgBytes);
 
   const applied = run(cwd, "change", "apply-model", "notification-policy", "--json");
   assert.equal(applied.status, 0, applied.stderr || applied.stdout);
   assert.equal(fs.existsSync(path.join(pack, "diagrams/notification/policy.state.puml")), false);
   assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/notification/policy.state.puml")), true);
+  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/rendered/notification/policy.state.svg")), true);
   assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/.gitkeep")), false);
   assert.equal(statusFor(cwd, "notification-policy").structurallyValid, true);
   assert.equal(statusFor(cwd, "notification-policy").designApproval.modelApplied, true);
@@ -321,6 +342,79 @@ test("design digest, model-only commit, evidence, completion approval and archiv
   assert.match(git(cwd, "status", "--porcelain", "--untracked-files=all"), /\.arch-lens\/changes\/archive/);
 });
 
+test("legacy multiple-active worktrees block status, validate, approval and apply", () => {
+  const cwd = protocolRepo();
+  assert.equal(run(cwd, "change", "new", "first-change", "--json").status, 0);
+  const first = path.join(cwd, ".arch-lens/changes/first-change");
+  const second = path.join(cwd, ".arch-lens/changes/second-change");
+  fs.cpSync(first, second, { recursive: true });
+  const secondManifest = parse(fs.readFileSync(path.join(second, "change.yaml"), "utf8"));
+  secondManifest.id = "second-change";
+  fs.writeFileSync(path.join(second, "change.yaml"), stringify(secondManifest, { lineWidth: 0 }));
+
+  for (const args of [
+    ["change", "status", "--json"],
+    ["change", "validate", "first-change", "--json"],
+    ["change", "record-approval", "first-change", "--stage", "design", "--reviewer", "Alice", "--json"],
+    ["change", "apply-model", "first-change", "--json"]
+  ]) assertJsonDiagnostic(run(cwd, ...args), "MULTIPLE_ACTIVE_CHANGES");
+});
+
+test("parallel Change Packs are allowed only in independent linked worktrees", () => {
+  const cwd = protocolRepo();
+  assert.equal(run(cwd, "change", "new", "main-change", "--json").status, 0);
+  const linkedParent = tempDir();
+  const linked = path.join(linkedParent, "linked");
+  git(cwd, "worktree", "add", "-q", "-b", "feature/parallel-change", linked, "HEAD");
+  const created = run(linked, "change", "new", "parallel-change", "--json");
+  assert.equal(created.status, 0, created.stderr || created.stdout);
+  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/changes/parallel-change")), false);
+  assert.equal(fs.existsSync(path.join(linked, ".arch-lens/changes/parallel-change")), true);
+});
+
+test("model baseline changes require explicit refresh and make approval stale", () => {
+  const cwd = protocolRepo();
+  assert.equal(run(cwd, "change", "new", "baseline-aware", "--json").status, 0);
+  writeCandidate(cwd, "baseline-aware", "candidate/domain.puml", "Candidate");
+  preparePack(cwd, "baseline-aware", [{ path: ".arch-lens/diagrams/candidate/domain.puml", operation: "add" }]);
+  const approved = run(cwd, "change", "record-approval", "baseline-aware", "--stage", "design", "--reviewer", "Alice", "--json");
+  assert.equal(approved.status, 0, approved.stderr || approved.stdout);
+  git(cwd, "add", ".arch-lens/changes/baseline-aware");
+  git(cwd, "commit", "-qm", "record draft approval");
+
+  writeDiagram(cwd, "external/domain.puml", "External");
+  git(cwd, "add", ".arch-lens/diagrams/external/domain.puml", ".arch-lens/rendered/external/domain.svg");
+  git(cwd, "commit", "-qm", "integrate external model");
+  const stale = statusFor(cwd, "baseline-aware");
+  assert.equal(stale.baseline.state, "stale");
+  assert.equal(stale.designApproval.state, "stale");
+  assert.ok(stale.diagnostics.some((item) => item.code === "MODEL_BASELINE_STALE"));
+
+  const refreshed = run(cwd, "change", "refresh-base", "baseline-aware", "--json");
+  assert.equal(refreshed.status, 0, refreshed.stderr || refreshed.stdout);
+  assert.deepEqual(JSON.parse(refreshed.stdout).changedBaselinePaths, [".arch-lens/diagrams/external/domain.puml"]);
+  const current = statusFor(cwd, "baseline-aware");
+  assert.equal(current.baseline.state, "current");
+  assert.equal(current.designApproval.state, "stale");
+  assertJsonError(run(cwd, "change", "refresh-base", "baseline-aware", "--json"), /已经是当前 HEAD/);
+});
+
+test("design approval requires a PASS visual review for every add or modify SVG", () => {
+  const cwd = protocolRepo();
+  assert.equal(run(cwd, "change", "new", "visual-gate", "--json").status, 0);
+  const diagrams = [{ path: ".arch-lens/diagrams/visual/domain.puml", operation: "add" }];
+  writeCandidate(cwd, "visual-gate", "visual/domain.puml", "Visual");
+  preparePack(cwd, "visual-gate", diagrams);
+  const decisions = path.join(cwd, ".arch-lens/changes/visual-gate/decisions.md");
+  fs.writeFileSync(decisions, decisionsText());
+  assertJsonDiagnostic(run(cwd, "change", "record-approval", "visual-gate", "--stage", "design", "--reviewer", "Alice", "--json"), "VISUAL_REVIEW_NOT_PASS");
+  fs.writeFileSync(decisions, decisionsText(diagrams).replace(": PASS -", ": CONCERNS -"));
+  assertJsonDiagnostic(run(cwd, "change", "record-approval", "visual-gate", "--stage", "design", "--reviewer", "Alice", "--json"), "VISUAL_REVIEW_NOT_PASS");
+  fs.writeFileSync(decisions, decisionsText(diagrams));
+  const approved = run(cwd, "change", "record-approval", "visual-gate", "--stage", "design", "--reviewer", "Alice", "--json");
+  assert.equal(approved.status, 0, approved.stderr || approved.stdout);
+});
+
 function protocolRepo() {
   const cwd = gitRepo();
   const initialized = run(cwd, "init", "--json");
@@ -337,7 +431,7 @@ function preparePack(cwd, id, diagrams, options = {}) {
   manifest.diagrams = diagrams;
   fs.writeFileSync(manifestPath, stringify(manifest, { lineWidth: 0 }));
   fs.writeFileSync(path.join(root, "proposal.md"), proposalText(options.openQuestion));
-  fs.writeFileSync(path.join(root, "decisions.md"), decisionsText());
+  fs.writeFileSync(path.join(root, "decisions.md"), decisionsText(diagrams));
   fs.writeFileSync(path.join(root, "tasks.md"), "# Implementation Tasks\n\n- [ ] T001 [AC-001] Implement and test the approved behavior.\n");
   fs.writeFileSync(path.join(root, "verification.md"), pendingVerificationText());
 }
@@ -371,7 +465,8 @@ The current Git baseline is representative.
 `;
 }
 
-function decisionsText() {
+function decisionsText(diagrams = []) {
+  const reviews = diagrams.filter((item) => item.operation !== "delete").map((item) => `- ${item.path}: PASS - Current SVG checked for clipping/overlap, crossings, density, boundaries, and reading order.`).join("\n");
   return `# Design Decisions
 
 ## D001: Keep one explicit responsibility
@@ -391,6 +486,10 @@ Distribute the behavior across callers.
 ### Consequences
 
 The boundary is easier to review and test.
+
+## Visual Review
+
+${reviews || "No add/modify diagrams require visual review."}
 `;
 }
 
@@ -468,13 +567,21 @@ Humans approve design and completion.
 function writeDiagram(cwd, relative, className) {
   const target = path.join(cwd, ".arch-lens/diagrams", relative);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, `@startuml\n' arch-lens: type=domain\n' arch-lens: question=Which concept owns this policy?\ntitle Policy domain\nclass ${className}\n@enduml\n`);
+  const content = `@startuml\n' arch-lens: type=domain\n' arch-lens: question=Which concept owns this policy?\ntitle Policy domain\nclass ${className}\n@enduml\n`;
+  fs.writeFileSync(target, content);
+  const rendered = path.join(cwd, ".arch-lens/rendered", relative.replace(/\.puml$/i, ".svg"));
+  fs.mkdirSync(path.dirname(rendered), { recursive: true });
+  fs.writeFileSync(rendered, fakeSvg(content));
 }
 
 function writeCandidate(cwd, id, relative, className) {
   const target = path.join(cwd, ".arch-lens/changes", id, "diagrams", relative);
   fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.writeFileSync(target, `@startuml\n' arch-lens: type=domain\n' arch-lens: question=Which concept owns this policy?\ntitle Policy domain\nclass ${className}\n@enduml\n`);
+  const content = `@startuml\n' arch-lens: type=domain\n' arch-lens: question=Which concept owns this policy?\ntitle Policy domain\nclass ${className}\n@enduml\n`;
+  fs.writeFileSync(target, content);
+  const rendered = path.join(cwd, ".arch-lens/changes", id, "rendered", relative.replace(/\.puml$/i, ".svg"));
+  fs.mkdirSync(path.dirname(rendered), { recursive: true });
+  fs.writeFileSync(rendered, fakeSvg(content));
 }
 
 function statusFor(cwd, id) {
@@ -492,9 +599,9 @@ if (args.includes("-version")) { console.log("PlantUML version 1.2026.6"); proce
 let source = "";
 for await (const chunk of process.stdin) source += chunk;
 if (args.includes("-syntax")) { if (source.includes("SYNTAX_ERROR")) process.exit(200); console.log("CLASS"); process.exit(0); }
-const count = (source.match(/@startuml\\b/gi) ?? []).length;
-const rendered = process.env.FAKE_PLANTUML_WRONG_SVG_COUNT && count > 1 ? count - 1 : count;
-for (let index = 0; index < rendered; index += 1) process.stdout.write('<svg xmlns="http://www.w3.org/2000/svg"><text>' + index + '</text></svg>');
+const diagrams = [...source.matchAll(/@startuml\\b[\\s\\S]*?@enduml/gi)].map((match) => match[0]);
+const rendered = process.env.FAKE_PLANTUML_WRONG_SVG_COUNT && diagrams.length > 1 ? diagrams.slice(0, -1) : diagrams;
+for (const diagram of rendered) process.stdout.write('<svg xmlns="http://www.w3.org/2000/svg" width="800px" height="400px" viewBox="0 0 800 400"><text>' + diagram.length + '</text></svg>');
 `);
   fs.chmodSync(target, 0o755);
   return target;
@@ -523,7 +630,12 @@ function git(cwd, ...args) {
 
 function run(cwd, ...raw) {
   const env = typeof raw.at(-1) === "object" ? raw.pop() : {};
-  return spawnSync(process.execPath, [cli, ...raw], { cwd, encoding: "utf8", env: { ...process.env, ARCH_LENS_TEST_MODE: "1", ARCH_LENS_TEST_SKIP_RUNTIME: "1", ...env } });
+  const managed = env.ARCH_LENS_TEST_MANAGED_PLANTUML ?? env.ARCH_LENS_PLANTUML ?? fakePlantUml();
+  return spawnSync(process.execPath, [cli, ...raw], { cwd, encoding: "utf8", env: { ...process.env, ARCH_LENS_TEST_MODE: "1", ARCH_LENS_TEST_SKIP_RUNTIME: "1", ARCH_LENS_TEST_MANAGED_PLANTUML: managed, ...env } });
+}
+
+function fakeSvg(content) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="800px" height="400px" viewBox="0 0 800 400"><text>${content.trimEnd().length}</text></svg>`;
 }
 
 function assertJsonError(result, pattern) {

@@ -11,7 +11,12 @@ export const FEATURES = Object.freeze([
   "approval-digest-v1",
   "completion-approval-v1",
   "managed-plantuml-runtime-v1",
-  "change-overlay-v1"
+  "change-overlay-v1",
+  "single-active-change-v1",
+  "model-baseline-freshness-v1",
+  "tracked-svg-mirror-v1",
+  "svg-facts-v1",
+  "visual-review-gate-v1"
 ]);
 export const DIAGRAMS_RELATIVE_PATH = ".arch-lens/diagrams";
 export const PRINCIPLES_RELATIVE_PATH = ".arch-lens/principles.md";
