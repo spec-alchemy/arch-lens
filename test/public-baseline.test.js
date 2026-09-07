@@ -39,15 +39,15 @@ test("公开基线只呈现当前产品入口并保留合法历史归档", () =>
   assert.equal(diagrams.length, 5);
 });
 
-test("npm 草案发布保持 scoped 包、draft 标签和稳定 CLI 名称", () => {
+test("npm 预览发布保持 scoped 包、next 标签和稳定 CLI 名称", () => {
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
   assert.equal(packageJson.name, "@spec-alchemy/arch-lens");
-  assert.equal(packageJson.version, "0.0.0-draft");
+  assert.equal(packageJson.version, "0.1.0-alpha.1");
   assert.equal(packageJson.private, false);
   assert.deepEqual(packageJson.publishConfig, {
     access: "public",
-    tag: "draft",
+    tag: "next",
   });
   assert.deepEqual(packageJson.bin, {
     "arch-lens": "bin/arch-lens.js",

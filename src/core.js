@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-export const VERSION = "0.0.0-draft";
+export const VERSION = "0.1.0-alpha.1";
 export const SCHEMA_VERSION = 1;
 export const WORKFLOW_PROTOCOL = 1;
 export const FEATURES = Object.freeze([

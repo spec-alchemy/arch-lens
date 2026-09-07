@@ -3,7 +3,7 @@ import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { atomicWrite, sha256 } from "./core.js";
+import { VERSION, atomicWrite, sha256 } from "./core.js";
 
 export const PLANTUML_VERSION = "1.2026.6";
 export const PLANTUML_SHA256 = "89948f14c93756c7a3fb7b69078ff37e8489fd79dd430c582b931e2f65358690";
@@ -147,7 +147,7 @@ function downloadHttps(url, redirects) {
   if (url.protocol !== "https:" || !REDIRECT_HOSTS.has(url.hostname)) return Promise.reject(new Error(`拒绝不受信任的 PlantUML 下载地址：${url.href}`));
   if (redirects > 5) return Promise.reject(new Error("PlantUML 下载重定向次数过多。"));
   return new Promise((resolve, reject) => {
-    const request = https.get(url, { timeout: DOWNLOAD_TIMEOUT_MS, headers: { "User-Agent": "arch-lens/0.0.0-draft" } }, (response) => {
+    const request = https.get(url, { timeout: DOWNLOAD_TIMEOUT_MS, headers: { "User-Agent": `arch-lens/${VERSION}` } }, (response) => {
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
         downloadHttps(new URL(response.headers.location, url), redirects + 1).then(resolve, reject);

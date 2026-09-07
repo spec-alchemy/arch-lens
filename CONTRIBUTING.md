@@ -1,6 +1,6 @@
 # Contributing to Arch Lens
 
-Arch Lens 目前处于 `0.0.0-draft`。欢迎通过 issue 和 pull request 参与；首个预览版本会明确 CLI、Skill、PlantUML 合同和 Change Pack 协议的兼容范围。
+Arch Lens 当前为 `0.1.0-alpha.1` 外部预览版。欢迎通过 issue 和 pull request 参与；预览版会持续明确 CLI、Skill、PlantUML 合同和 Change Pack 协议的兼容范围。
 
 ## 开发环境
 
@@ -41,12 +41,22 @@ hotfix/<version>-<slug>
 
 ## 版本与发布
 
-- draft 阶段保持 `0.0.0-draft`，仅发布 scoped npm 包 `@spec-alchemy/arch-lens`，并固定使用 npm `draft` dist-tag；不创建 `v0.0.0-draft` 标签或 GitHub Release，也不更新 npm `latest`。需要不可变 Git 引用时使用 `snapshot-YYYY-MM-DD`。
-- 首个外部预览版为 `0.1.0-alpha.1`，之后按 `alpha.N`、`beta.N`、`rc.N`、`0.1.0` 演进。
+- 首个外部预览版为 `0.1.0-alpha.1`，npm 使用 `next` dist-tag，GitHub 使用 `v0.1.0-alpha.1` 标签和预发布 Release。
+- 后续版本按 `alpha.N`、`beta.N`、`rc.N`、`0.1.0` 演进；预览版不更新 npm `latest`。
 - `0.1.x` 只包含兼容修复；pre-1.0 的破坏性产品变化提升到 `0.2.0`；稳定公开契约后才发布 `1.0.0`。
 - 产品版本、`workflowProtocol` 和 JSON `schemaVersion` 独立演进；只有对应契约发生不兼容变化时才提升协议或 Schema 版本。
 - 每次发布必须更新 `CHANGELOG.md`、通过完整 CI并验证 npm 包清单。带正式版本号的发布从干净的受保护 `main` 创建 `vX.Y.Z` 标签。
 
-常规 CI 只执行验证，不持有 npm 发布权限。draft 包从合并后的干净 `main` 显式发布；首个带正式版本号的预览版仍为 `0.1.0-alpha.1`。
+常规 CI 只执行验证，不持有 npm 发布权限。预览包从合并后的干净 `main` 显式发布，并在发布前运行 `npm run release:check`；GitHub Release 必须绑定同名 `vX.Y.Z` 标签。
+
+本次 `0.1.0-alpha.1` 发布命令为：
+
+```sh
+npm run release:check
+npm publish --access public --tag next
+git tag v0.1.0-alpha.1
+git push origin v0.1.0-alpha.1
+gh release create v0.1.0-alpha.1 --repo spec-alchemy/arch-lens --title "Arch Lens v0.1.0-alpha.1" --generate-notes --prerelease
+```
 
 提交 PR 即表示贡献按本仓库的 [EPL 2.0](LICENSE) 许可提供。

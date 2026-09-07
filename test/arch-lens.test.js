@@ -9,7 +9,7 @@ import test from "node:test";
 const root = path.resolve(import.meta.dirname, "..");
 const cli = path.join(root, "bin", "arch-lens.js");
 
-test("CLI exposes the draft Skill-first surface and keeps removed or semantic commands absent", () => {
+test("CLI exposes the preview Skill-first surface and keeps removed or semantic commands absent", () => {
   assert.notEqual(fs.statSync(cli).mode & 0o111, 0, "npm bin entry must remain executable");
   const version = run(tempDir(), "--version");
   const help = run(tempDir(), "--help");
@@ -23,7 +23,7 @@ test("CLI exposes the draft Skill-first surface and keeps removed or semantic co
   const renderOutsideRepository = run(tempDir(), "diagrams", "render", "--json");
 
   assert.equal(version.status, 0, version.stderr);
-  assert.equal(version.stdout.trim(), "0.0.0-draft");
+  assert.equal(version.stdout.trim(), "0.1.0-alpha.1");
   assert.match(help.stdout, /Skill-first 的 PlantUML/);
   assert.match(help.stdout, /capabilities/);
   assert.match(help.stdout, /diagrams/);
@@ -38,7 +38,7 @@ test("CLI exposes the draft Skill-first surface and keeps removed or semantic co
   assert.doesNotMatch(changeHelp.stdout, /\breview\b|\bapprove\b|\bverify\b/);
   assert.deepEqual(JSON.parse(capabilities.stdout), {
     schemaVersion: 1,
-    cliVersion: "0.0.0-draft",
+    cliVersion: "0.1.0-alpha.1",
     workflowProtocol: 1,
     features: ["plantuml-batch-render", "change-pack-v1", "approval-digest-v1", "completion-approval-v1", "managed-plantuml-runtime-v1", "change-overlay-v1", "single-active-change-v1", "model-baseline-freshness-v1", "tracked-svg-mirror-v1", "svg-facts-v1", "visual-review-gate-v1"]
   });

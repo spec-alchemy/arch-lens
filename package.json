@@ -1,11 +1,11 @@
 {
   "name": "@spec-alchemy/arch-lens",
-  "version": "0.0.0-draft",
+  "version": "0.1.0-alpha.1",
   "description": "Skill-first 的 PlantUML 业务建模与变更审查工作区",
   "private": false,
   "publishConfig": {
     "access": "public",
-    "tag": "draft"
+    "tag": "next"
   },
   "license": "EPL-2.0",
   "repository": {
@@ -24,7 +24,8 @@
     "node": ">=20"
   },
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "release:check": "npm test && node bin/arch-lens.js capabilities --json && node bin/arch-lens.js diagrams check --json && npm pack --dry-run"
   },
   "dependencies": {
     "commander": "^14.0.2",
