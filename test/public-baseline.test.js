@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-test("公开基线只呈现当前产品入口和空的历史归档", () => {
+test("公开基线只呈现当前产品入口并保留合法历史归档", () => {
   const read = (relative) => fs.readFileSync(path.join(root, relative), "utf8");
   const readme = read("README.md");
   const principles = read(".arch-lens/principles.md");
@@ -19,7 +19,8 @@ test("公开基线只呈现当前产品入口和空的历史归档", () => {
   assert.match(principles, /## Quality Gates/);
   assert.doesNotMatch(principles, /TODO/);
 
-  assert.deepEqual(archiveEntries, [".gitkeep"]);
+  assert.ok(archiveEntries.includes(".gitkeep"));
+  assert.ok(archiveEntries.every((entry) => entry === ".gitkeep" || /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(entry)));
   for (const command of ["capabilities --json", "init", "diagrams check", "change new", "archive"]) {
     assert.match(readme, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
