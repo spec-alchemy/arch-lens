@@ -1,10 +1,12 @@
-name: Verify Arch Lens draft
+name: Verify Arch Lens release
 
 permissions:
   contents: read
 
 on:
   push:
+    tags:
+      - "v*"
   pull_request:
 
 jobs:
@@ -21,6 +23,9 @@ jobs:
           distribution: temurin
           java-version: "21"
       - run: npm ci
+      - name: Verify release tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: test "$GITHUB_REF_NAME" = "v$(node -p \"require('./package.json').version\")"
       - run: npm test
       - name: Verify workflow protocol contract
         run: node bin/arch-lens.js capabilities --json
@@ -33,4 +38,4 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
       - run: npm pack --dry-run
 
-# 常规 CI 只验证可发布产物；npm 发布需要从受保护 main 显式执行。
+# 常规 CI 只验证可发布产物；npm 发布和 GitHub Release 仍需从受保护 main 显式执行。

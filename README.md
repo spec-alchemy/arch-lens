@@ -2,21 +2,21 @@
 
 Arch Lens 是面向人类与 AI 协作的 Skill-first PlantUML 业务建模与变更审查工作区。它帮助团队理解参与者目标、系统用例、领域实体与规则、业务流程、职责协作、生命周期、组件边界和接口，并让设计决策与实现证据保持可追溯。
 
-当前版本为 `0.0.0-draft`。产品仍在公开早期阶段，首个预览版本会单独定义兼容承诺。
+当前版本为 `0.1.0-alpha.1`，这是首个外部预览版本。预览阶段的 CLI、Skill、PlantUML 合同和 Change Pack 协议仍可能演进。
 
 ## 安装
 
-通过 npm 的 `draft` 标签安装当前公开草案，安装后的命令名为 `arch-lens`：
+通过 npm 的 `next` 标签安装当前公开预览版，安装后的命令名为 `arch-lens`：
 
 ```sh
-npm install -g @spec-alchemy/arch-lens@draft
+npm install -g @spec-alchemy/arch-lens@next
 arch-lens capabilities --json
 ```
 
 也可以不做全局安装，直接运行：
 
 ```sh
-npx @spec-alchemy/arch-lens@draft capabilities --json
+npx @spec-alchemy/arch-lens@next capabilities --json
 ```
 
 ## 当前能力
@@ -40,6 +40,21 @@ arch-lens diagrams check
 ```
 
 `init` 会在用户缓存中安装并校验受管 PlantUML 运行时，然后创建项目级建模工作区。模型始终在本地处理，不上传到远程服务。
+
+预览版发布后，npm 使用 `next` 标签；从受保护 `main` 发布时执行：
+
+```sh
+npm run release:check
+npm publish --access public --tag next
+```
+
+GitHub 预发布版本使用同名 tag：
+
+```sh
+git tag v0.1.0-alpha.1
+git push origin v0.1.0-alpha.1
+gh release create v0.1.0-alpha.1 --repo spec-alchemy/arch-lens --title "Arch Lens v0.1.0-alpha.1" --generate-notes --prerelease
+```
 
 ## 协作工作流
 
@@ -101,6 +116,8 @@ npm ci
 npm test
 node bin/arch-lens.js diagrams check
 npm pack --dry-run
+# 或运行完整发布前检查
+npm run release:check
 ```
 
 贡献流程、分支规则和版本计划见 [CONTRIBUTING.md](CONTRIBUTING.md)。许可证和第三方依赖说明见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
