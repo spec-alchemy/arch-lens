@@ -169,7 +169,12 @@ export function validateSvgMirror(root, records, { renderedRoot = null, fullMirr
     const expected = renderDiagramRecords(root, records, diagnostics, { managedOnly: true });
     records.forEach((record, index) => {
       const actual = fs.readFileSync(record.svgFile);
-      if (!actual.equals(expected[index])) diagnostics.push(diagnostic("error", "SVG_STALE", relativePosix(root, record.svgFile), null, `标准 SVG 与锁定受管 PlantUML 对 ${record.path} 的输出不一致。`));
+      const actualSource = plantUmlSourceToken(actual);
+      const expectedSource = plantUmlSourceToken(expected[index]);
+      const fresh = actualSource && expectedSource
+        ? actualSource === expectedSource
+        : actual.equals(expected[index]);
+      if (!fresh) diagnostics.push(diagnostic("error", "SVG_STALE", relativePosix(root, record.svgFile), null, `标准 SVG 与 ${record.path} 的 PlantUML 源指纹不一致。`));
     });
   }
   return { facts, diagnostics: diagnostics.sort(compareDiagnostics) };
@@ -344,6 +349,10 @@ function commandMessage(result) {
 function isUsableSvg(svg) {
   const source = svg.toString("utf8");
   return source.slice(0, 4096).includes("<svg") && !/(?:Cannot find Graphviz|Dot executable does not exist|Syntax Error\?|An error has occurred|No valid @start)/i.test(source);
+}
+
+function plantUmlSourceToken(svg) {
+  return svg.toString("utf8").match(/<\?plantuml-src\s+([^?]+)\?>/i)?.[1] ?? null;
 }
 
 function discoverSvgFiles(root, workspaceRoot, diagnostics) {

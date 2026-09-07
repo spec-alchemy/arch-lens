@@ -107,7 +107,7 @@ node bin/arch-lens.js diagrams render
 node bin/arch-lens.js diagrams check
 ```
 
-标准 SVG 由锁定运行时原子生成并进入 Git；检查会在内存中重渲染并比较精确字节，同时报告 SHA-256、viewBox、宽高和宽高比。AI 或人类仍必须逐张打开 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；CLI 不会宣称图面美观或语义正确。
+标准 SVG 由锁定运行时原子生成并进入 Git；检查会在内存中重渲染并核对 PlantUML 源指纹，同时报告 SHA-256、viewBox、宽高和宽高比。源指纹避免不同 Graphviz 平台的布局字节差异造成误报；缺少指纹的旧 SVG 仍按完整字节校验。AI 或人类仍必须逐张打开 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；CLI 不会宣称图面美观或语义正确。
 
 ## 开发
 

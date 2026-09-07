@@ -58,7 +58,7 @@ arch-lens diagrams render
 
 架构敏感变更使用 `arch-lens change diff <id>` 获取不落盘的文本差异。分别运行 `diagrams render` 与 `change render <id>` 刷新标准 SVG；前者镜像已批准图集，后者镜像候选 overlay，均不创建 base/candidate 子目录。
 
-省略 `--output` 时，顶层 SVG 固定生成到 Git 根目录下的 `.arch-lens/rendered/`，并强制使用锁定受管运行时；`ARCH_LENS_PLANTUML` 和 PATH fallback 不能生成或验证标准镜像。完整 render 原子替换镜像并清除陈旧 SVG；validate/check 在内存中重渲染并精确比较字节，不修改文件。显式 `--output` 是非门禁导出，不满足标准 SVG 要求。渲染输出及其真实路径不得位于 diagrams 源目录内；符号链接不得绕过该边界。
+省略 `--output` 时，顶层 SVG 固定生成到 Git 根目录下的 `.arch-lens/rendered/`，并强制使用锁定受管运行时；`ARCH_LENS_PLANTUML` 和 PATH fallback 不能生成或验证标准镜像。完整 render 原子替换镜像并清除陈旧 SVG；validate/check 在内存中重渲染并核对 PlantUML 源指纹，不修改文件；缺少源指纹的旧 SVG 回退为精确字节比较。显式 `--output` 是非门禁导出，不满足标准 SVG 要求。渲染输出及其真实路径不得位于 diagrams 源目录内；符号链接不得绕过该边界。
 
 CLI 为每张标准 SVG 报告 SHA-256、viewBox、width、height 和 aspect ratio。缺失尺寸、非正尺寸是错误；极端宽高比是稳定风险诊断。CLI 不据此声称语义或审美正确。
 
