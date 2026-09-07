@@ -26,11 +26,11 @@ jobs:
       - name: Verify release tag matches package version
         if: startsWith(github.ref, 'refs/tags/v')
         run: test "$GITHUB_REF_NAME" = "v$(node -p \"require('./package.json').version\")"
+      - name: Install and verify the managed PlantUML runtime
+        run: node bin/arch-lens.js init --json
       - run: npm test
       - name: Verify workflow protocol contract
         run: node bin/arch-lens.js capabilities --json
-      - name: Install and verify the managed PlantUML runtime
-        run: node bin/arch-lens.js init --json
       - name: Validate cross-process managed runtime discovery and render repository diagrams
         run: |
           node bin/arch-lens.js diagrams check
