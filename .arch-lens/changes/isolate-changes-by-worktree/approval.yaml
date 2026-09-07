@@ -1,0 +1,23 @@
+schemaVersion: 1
+workflowProtocol: 1
+design:
+  - reviewer: BeaconSage
+    recordedAt: 2026-09-07T11:13:24.750Z
+    digest: 987af07c490ccc4be0944500c69ab5b44a3bc89d727a0de3765769214e3fff79
+    baseCommit: c6b664185065953776426d4096efdb3ee1f2251a
+    artifacts:
+      - path: .arch-lens/changes/isolate-changes-by-worktree/change.yaml
+        sha256: e900ac43545e9525da844d5d9908eb43b67931f3adc6e7b4050c9dbaffbeb407
+      - path: .arch-lens/changes/isolate-changes-by-worktree/decisions.md
+        sha256: 838e056a24d061566612df647c3b8ec5d915a290da654f18430c8db02975bca1
+      - path: .arch-lens/changes/isolate-changes-by-worktree/proposal.md
+        sha256: a89edaa91be7d797b3cac94f0193c65e6140c5fed9ea80e7187c59a8d3cc94c9
+      - path: .arch-lens/diagrams/check-and-render.sequence.puml
+        sha256: 0b176c729960f7f31bf4f3170a8c3b85a683586331315ef1ecb554d30aa4a2f1
+      - path: .arch-lens/diagrams/modeling-review.activity.puml
+        sha256: aa0820710c78706384348a002818344f5896e75294fe147181de6b2ffcf741ad
+      - path: .arch-lens/diagrams/runtime-responsibilities.component.puml
+        sha256: 897599d57db7c80b275a452ea56b67aa84e75fb709fc530d0f9e7450e414c303
+      - path: .arch-lens/principles.md
+        sha256: 480b1121967b746a3356dcda277c95ba0ce4ad8c9e82e1558ffdb1b84a8427d2
+completion: []

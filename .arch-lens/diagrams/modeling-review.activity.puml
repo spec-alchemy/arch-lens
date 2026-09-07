@@ -1,53 +1,87 @@
 @startuml
 ' arch-lens: type=activity
-' arch-lens: question=一个架构敏感变更如何经过建模、双人工关卡、实现验证和归档？
-title Arch Lens Change Pack 完整闭环
+' arch-lens: question=一个隔离的架构敏感变更如何在最新模型基线上经过建模、派生视图验证、串行集成和双人工关卡？
+title Arch Lens 隔离变更完整闭环
 
 |AI Agent|
 start
+:在独立 branch/worktree 开始变更;
 :检查 CLI workflowProtocol 和 capabilities;
-:创建 Change Pack;
+|确定性 CLI|
+if (当前 worktree 已有活动 Change Pack？) then ([是])
+  :拒绝创建第二个变更;
+  stop
+else ([否])
+  :从当前 HEAD 创建唯一活动 Change Pack;
+endif
+
+|AI Agent|
 :收集事实并澄清问题、范围和验收标准;
 :选择最少必要 PlantUML 视图;
 
 repeat
-  |AI Agent|
   :在 Change Pack diagrams 中修改候选 .puml overlay;
   :记录提案、决策和未决问题;
-  :执行结构、语法和 Git 事实校验;
+  |确定性 CLI|
+  :使用锁定受管 PlantUML 原子刷新候选 SVG;
+  :检查单活动变更、模型基线、结构、语法和 Git 事实;
+  :重新渲染并比对 .puml 与受版本控制 SVG;
+  :报告 SVG 摘要、尺寸、宽高比和客观风险;
   :读取即时文本 diff;
-  if (需要导出 SVG 审查？) then ([是])
-    :按相对路径镜像生成候选 SVG;
+  |AI Agent|
+  :逐图检查标签、交叉线、密度、边界和阅读顺序;
+  if (候选 SVG 清晰可审查？) then ([是])
+    :记录逐图视觉 PASS;
+    :执行跨图和方案语义审查;
+    |人类审查者|
+    :查看 .puml、SVG、diff、理由、风险和问题;
   else ([否])
-    :使用编辑器直接预览 .puml;
+    :记录 CONCERNS 或 FAIL;
+    :精简关系、重组边界或更换视图;
   endif
-  :执行跨图和方案语义审查;
-  |人类审查者|
-  :查看 .puml 预览或 SVG、diff、理由、风险和问题;
-repeat while (设计需要修改？) is ([是]) not ([否])
-:明确批准候选设计;
+repeat while (设计、语义或可视化需要修改？) is ([是]) not ([否])
 
 |确定性 CLI|
-:记录设计批准及内容摘要;
-:原子提升候选 overlay 到已批准顶层图集;
+if (已批准模型基线晚于 baseCommit？) then ([是])
+  |AI Agent|
+  :使用 Git 同步目标分支;
+  |确定性 CLI|
+  :显式刷新 baseCommit 并使旧批准 stale;
+  |AI Agent|
+  :返回候选模型审查;
+  stop
+else ([否])
+  |人类审查者|
+  :明确批准候选设计;
+endif
+
+|AI Agent|
+:确认逐图视觉结论仍为 PASS;
+|确定性 CLI|
+:确认全部候选 SVG current;
+:记录设计批准及 .puml/SVG 内容摘要;
+:原子提升候选 .puml/SVG 到已批准图集;
 |AI Agent|
 :提交 model-only commit;
 :确认批准摘要仍然有效;
 :实施架构敏感代码;
 :运行项目测试和契约验证;
-:逐项核对 AC、模型、代码 diff 和证据;
 
-if (实现推翻了已批准设计？) then ([是])
+|Git 集成队列|
+:逐个合入目标分支;
+|AI Agent|
+:在集成结果上逐项核对 AC、模型、代码 diff 和证据;
+
+if (实现或集成推翻了已批准设计？) then ([是])
   :使旧批准变为 stale;
-  :在 Change Pack diagrams 中重新形成候选 .puml overlay;
-  :结束当前实施回合并返回设计审查;
+  :返回隔离 worktree 重新形成候选设计;
   stop
 else ([否])
   :提交实现与验证证据;
 endif
 
 |人类审查者|
-:审查并明确验收实现结果;
+:审查并明确验收集成后的实现结果;
 |确定性 CLI|
 :记录完成批准并原子归档 Change Pack;
 stop
