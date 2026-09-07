@@ -1,55 +1,72 @@
 @startuml
 ' arch-lens: type=sequence
-' arch-lens: question=Change Pack 如何从已批准基线和候选 overlay 提供即时 diff 与可选 SVG 而不持久化第二份模型？
-title Change Pack 候选审查与按需渲染
+' arch-lens: question=CLI 如何证明候选 PlantUML 基于最新批准模型，并且受版本控制 SVG 是其锁定运行时的当前输出？
+title Change Pack 基线与派生视图验证
 
 actor "AI Agent" as Agent
 participant "Arch Lens Skill" as Skill
 participant "Arch Lens CLI" as CLI
-collections "Change Pack" as Change
+collections "唯一活动 Change Pack" as Change
 participant "Git" as Git
-collections "已批准 diagrams" as Approved
-collections "候选 diagrams overlay" as Candidate
-participant "受管 PlantUML" as PlantUML
-collections "Change Pack rendered\n可选、Git 忽略、仅 SVG" as Output
+collections "已批准 .puml/SVG" as Approved
+collections "候选 .puml overlay" as Candidate
+participant "锁定受管 PlantUML" as PlantUML
+collections "候选 rendered SVG\n受版本控制、严格镜像" as Output
 
 Agent -> Skill : review model(changeId)
 Skill -> CLI : capabilities()
-CLI --> Skill : workflowProtocol + features
-Skill -> CLI : change diff(changeId)
-CLI -> Change : 读取 baseCommit 与 diagram operations
-CLI -> Git : 读取 baseCommit 中的已批准 PlantUML
-CLI -> Candidate : 读取 add/modify overlay
-CLI -> CLI : 校验路径、Schema、元数据和唯一载体边界
+CLI --> Skill : workflowProtocol + required features
+Skill -> CLI : change render(changeId)
+CLI -> Change : 确认当前 worktree 只有该活动变更
+CLI -> Candidate : 读取声明的 add/modify .puml
+CLI -> PlantUML : 一次 headless -tsvg -pipe（SANDBOX）
+PlantUML --> CLI : 同序 SVG 字节流
 
-loop 每个声明的 add/modify/delete 图
-  CLI -> CLI : 按 operation 组合 base 与 overlay
-  CLI -> CLI : 检查离线资源与 PlantUML 合同
+alt 渲染失败或输出协议异常
+  CLI --> Skill : 文件级诊断，保留原镜像
+else 全部渲染成功
+  CLI -> Output : 原子替换严格镜像 SVG
+  CLI -> CLI : 读取 viewBox、宽高与宽高比事实
+  CLI --> Skill : SVG 路径、摘要、尺寸与客观风险
 end
 
-alt 结构、Git 或离线策略失败
-  CLI --> Skill : 结构化事实诊断，不写文件
-else 策略通过
-  CLI --> Skill : stdout/JSON 文本 diff，不持久化
+Skill -> CLI : change validate(changeId)
+CLI -> Change : 读取 baseCommit 与 diagram operations
+CLI -> Git : 比较 baseCommit..HEAD 的原则与顶层 .puml
 
-  opt 人类或 Agent 需要导出 SVG
-    Skill -> CLI : change render(changeId)
-    CLI -> PlantUML : 一次 headless -tsvg -pipe（SANDBOX）
-    PlantUML --> CLI : overlay 同序 SVG 字节流
-    alt 渲染失败或输出协议异常
-      CLI --> Skill : 文件级诊断，不留下部分 rendered
-    else 渲染完整成功
-      CLI -> Output : 原子替换严格镜像 SVG
-      CLI --> Skill : SVG 路径
-    end
+alt 已批准模型基线发生外部变化
+  CLI --> Skill : MODEL_BASELINE_STALE
+  Skill --> Agent : 先同步 Git，再显式刷新基线并重新审查
+else 模型基线仍有效
+  loop 每个声明的图
+    CLI -> Candidate : 读取 add/modify 源；delete 要求候选对均不存在
+    CLI -> Output : 要求同路径 SVG，拒绝缺失、孤立或无效文件
+    CLI -> PlantUML : 在内存中重新渲染 add/modify 源
+    PlantUML --> CLI : 当前 SVG 字节
+    CLI -> CLI : 精确比较当前输出与受版本控制 SVG
+  end
+
+  alt 任一 SVG 不匹配
+    CLI --> Skill : SVG_MISSING、SVG_ORPHANED 或 SVG_STALE
+  else 源与派生视图一致
+    CLI -> CLI : 计算绑定 .puml/SVG 的设计摘要
+    CLI --> Skill : 文本 diff、SVG 路径与结构化事实
   end
 end
 
-Skill -> Skill : 判断跨图一致性、设计取舍和未决风险
-Skill --> Agent : 可视化、diff、理由与语义审查结论
+Skill -> Output : 打开并逐张查看当前 SVG
+Skill -> Skill : 检查标签、交叉线、密度、边界和阅读顺序
+alt 任一图为 CONCERNS 或 FAIL
+  Skill --> Agent : 视觉问题与需要精简或重组的 .puml
+else 全部图为 PASS
+  Skill -> Skill : 判断跨图一致性、设计取舍和未决风险
+  Skill --> Agent : 逐图视觉结论、diff、理由与语义审查结论
+end
 
-note over Approved,Output
-  顶层 diagrams 是已批准模型，Change Pack diagrams 是未批准候选。
-  rendered 只在显式请求时出现，并且只包含同路径 SVG。
+note over Candidate,Output
+  PlantUML 是唯一可编辑业务模型。
+  SVG 是必须存在、不可手工维护的派生审查产物。
+  自定义输出目录不满足标准镜像门禁。
+  CLI 只报告客观布局事实，视觉质量由 Skill 与人类判断。
 end note
 @enduml

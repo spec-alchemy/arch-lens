@@ -1,0 +1,12 @@
+schemaVersion: 1
+workflowProtocol: 1
+id: isolate-changes-by-worktree
+baseCommit: c6b664185065953776426d4096efdb3ee1f2251a
+createdAt: 2026-09-07T10:00:54.252Z
+diagrams:
+  - path: .arch-lens/diagrams/modeling-review.activity.puml
+    operation: modify
+  - path: .arch-lens/diagrams/check-and-render.sequence.puml
+    operation: modify
+  - path: .arch-lens/diagrams/runtime-responsibilities.component.puml
+    operation: modify

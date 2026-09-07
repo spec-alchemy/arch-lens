@@ -1,59 +1,52 @@
 @startuml
 ' arch-lens: type=component
-' arch-lens: question=Skill、CLI、受管 PlantUML 运行时、Git 与持久资产如何分工并防止语义判断下沉？
-title Arch Lens Skill-first 运行时职责与接口
+' arch-lens: question=Skill、CLI、Git worktree、锁定 PlantUML 运行时与受版本控制模型资产如何分工并保持源和派生视图一致？
+title Arch Lens 隔离工作流职责与接口
 !pragma layout smetana
 top to bottom direction
 
+actor "AI Agent" as Agent
 actor "人类审查者" as Reviewer
-component "AI Agent" as Agent
 
-package "Arch Lens npm 包" {
-  component "Deterministic CLI" as CLI
+package "Arch Lens npm 包" as Product {
+  component "Modeling & Review Skill\n语义与视觉判断" as Skill
+  component "Deterministic CLI\n文件与 Git 事实" as CLI
   component "Runtime Manager" as RuntimeManager
-  component "Modeling & Review Skill" as Skill
 }
 
-artifact "用户缓存\nPlantUML 1.2026.6 JAR" as ManagedPlantUML
-component "Git" as Git <<external tool>>
-file ".arch-lens/principles.md\n项目原则" as Principles
-folder ".arch-lens/diagrams\nPlantUML 图集" as Diagrams
-folder ".arch-lens/changes\nChange Pack" as Changes
-artifact ".arch-lens/rendered SVG\n工作区内、Git 忽略" as SVG
+package "单一 Git branch/worktree" as Worktree {
+  file "principles.md\n项目原则" as Principles
+  folder "changes/<id>\n唯一活动 Change Pack" as Change
+  folder "diagrams/**/*.puml\n唯一可编辑业务模型" as Diagrams
+  folder "rendered/**/*.svg\n受版本控制派生视图" as SVG
+}
 
-Agent --> Skill : 执行理解、提案、建模、\n语义审查和实现审查
-Skill --> CLI : 调用确定性辅助命令
-CLI --> RuntimeManager : init 时确保运行时可用
-RuntimeManager --> ManagedPlantUML : 安装、校验和自动发现
-Skill --> Principles : 遵循项目约束
-Skill --> Diagrams : 读写唯一业务模型
-Skill --> Changes : 维护问题、取舍、任务和证据
-CLI --> Diagrams : 路径、元数据、摘要和语法事实
-CLI --> Changes : Schema、引用、摘要、审批和归档事实
-CLI --> Git : HEAD、diff、commit 和工作区事实
-CLI --> ManagedPlantUML : 自动发现、完整性与版本门禁
-ManagedPlantUML --> SVG : 生成标准可视化
-Reviewer --> SVG : 视觉判断
-Reviewer --> Diagrams : 审查文本 diff
-Reviewer --> Changes : 批准设计与验收实现
+component "Git\n隔离与串行集成" as Git <<external tool>>
+artifact "用户缓存\n锁定 PlantUML JAR" as ManagedPlantUML
 
-note bottom of CLI
-  只输出可由文件、Git、摘要或 PlantUML 确定的事实
-  不选择视图、不评价设计、不批准变更
-  不维护第二份业务模型或自研 Viewer
-  不通过系统包管理器或远程服务处理模型
-end note
+Agent --> Skill : 建模与审查
+Reviewer --> Skill : 查看当前 SVG 与 diff\n批准设计并验收实现
+Skill --> CLI : 调用确定性能力
+CLI --> RuntimeManager : 获取锁定运行时
+RuntimeManager --> ManagedPlantUML : 安装并校验
 
-note bottom of RuntimeManager
-  运行时只进入用户缓存，不进入项目仓库
-  从锁定官方 Release 下载并校验 SHA-256
-  通过 Java 21+ 执行 headless 版本探测
-  显式 ARCH_LENS_PLANTUML 仍可覆盖默认解析
-  下载、摘要或版本失败时不写工作区
-end note
+Skill --> Worktree : 维护原则、模型、\n候选与审查证据
+CLI --> Worktree : 校验单变更、基线、摘要、\nSVG freshness 与提交边界
+ManagedPlantUML --> SVG : 从 .puml 生成视图
+Git --> Worktree : 隔离分支并串行合入
 
 note bottom of Skill
-  负责业务语义和跨资产一致性判断
-  未获得人类明确授权时不得记录批准
+  逐图检查标签、交叉线、密度、边界和阅读顺序。
+  存在 CONCERNS 或 FAIL 时不得请求设计批准。
+end note
+
+note bottom of CLI
+  报告 SVG 摘要、viewBox、宽高和宽高比等客观事实。
+  不评价设计是否清晰，不创建或合并 Git worktree。
+end note
+
+note bottom of Diagrams
+  PlantUML 是唯一业务模型；SVG 不承载额外语义。
+  两者必须同路径、同步并由设计批准绑定。
 end note
 @enduml
