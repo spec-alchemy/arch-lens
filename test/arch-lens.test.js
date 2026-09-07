@@ -40,7 +40,7 @@ test("CLI exposes the draft Skill-first surface and keeps removed or semantic co
     schemaVersion: 1,
     cliVersion: "0.0.0-draft",
     workflowProtocol: 1,
-    features: ["plantuml-batch-render", "change-pack-v1", "approval-digest-v1", "completion-approval-v1", "managed-plantuml-runtime-v1", "change-overlay-v1"]
+    features: ["plantuml-batch-render", "change-pack-v1", "approval-digest-v1", "completion-approval-v1", "managed-plantuml-runtime-v1", "change-overlay-v1", "single-active-change-v1", "model-baseline-freshness-v1", "tracked-svg-mirror-v1", "svg-facts-v1", "visual-review-gate-v1"]
   });
   assert.equal(removed.status, 1);
   assert.match(removed.stderr, /未知命令/);
@@ -52,6 +52,7 @@ test("CLI exposes the draft Skill-first surface and keeps removed or semantic co
 test("init creates protocol 1 assets and current skill without overwriting them, then remains idempotent", () => {
   const cwd = gitRepo();
   fs.writeFileSync(path.join(cwd, "AGENTS.md"), "# Existing\n\nPreserve me.\n");
+  fs.writeFileSync(path.join(cwd, ".gitignore"), "dist/\n.arch-lens/rendered/\n.arch-lens/changes/**/rendered/\n");
   commitAll(cwd, "existing agents");
 
   const first = run(cwd, "init", "--json");
@@ -81,7 +82,7 @@ test("init creates protocol 1 assets and current skill without overwriting them,
   assert.match(fs.readFileSync(path.join(cwd, "AGENTS.md"), "utf8"), /workflowProtocol 1/);
   assert.match(fs.readFileSync(path.join(cwd, "AGENTS.md"), "utf8"), /默认一张主视图、通常最多三张/);
   assert.equal(count(fs.readFileSync(path.join(cwd, "AGENTS.md"), "utf8"), "ARCH-LENS:START"), 1);
-  assert.match(fs.readFileSync(path.join(cwd, ".gitignore"), "utf8"), /^\.arch-lens\/rendered\/$/m);
+  assert.equal(fs.readFileSync(path.join(cwd, ".gitignore"), "utf8"), "dist/\n");
 
   const skill = path.join(cwd, ".agents/skills/arch-lens/SKILL.md");
   fs.writeFileSync(path.join(cwd, ".arch-lens/principles.md"), "# Custom principles\n");
@@ -141,8 +142,7 @@ test("init installs, reuses and repairs the locked managed PlantUML runtime befo
   assert.equal(JSON.parse(repaired.stdout).plantUmlRuntime.installed, true);
   assert.deepEqual(fs.readFileSync(runtime.path), fs.readFileSync(source));
 
-  const model = path.join(cwd, ".arch-lens/diagrams/runtime.domain.puml");
-  fs.writeFileSync(model, diagram("domain", "运行时是否可复用？", "运行时", "class Runtime"));
+  writeDiagram(cwd, "runtime.domain.puml", diagram("domain", "运行时是否可复用？", "运行时", "class Runtime"));
   const checked = run(cwd, "diagrams", "check", "--json", noSource);
   assert.equal(checked.status, 0, checked.stderr || checked.stdout);
   assert.equal(JSON.parse(checked.stdout).valid, true);
@@ -346,15 +346,15 @@ test("diagrams check accepts an explicitly configured PlantUML JAR through PATH 
   const log = path.join(javaDir, "invocations.jsonl");
   const result = run(cwd, "diagrams", "check", "--json", {
     ARCH_LENS_PLANTUML: jar,
+    ARCH_LENS_TEST_MANAGED_PLANTUML: fake,
     FAKE_PLANTUML_LOG: log,
     PATH: `${javaDir}${path.delimiter}${process.env.PATH}`
   });
   assert.equal(result.status, 0, result.stderr || result.stdout);
   assert.equal(JSON.parse(result.stdout).valid, true);
-  for (const args of invocationLog(log)) {
-    assert.ok(args.includes("-Djava.awt.headless=true"), JSON.stringify(args));
-    assert.ok(args.includes("-headless"), JSON.stringify(args));
-  }
+  const invocations = invocationLog(log);
+  assert.ok(invocations.some((args) => args.includes("-Djava.awt.headless=true")), JSON.stringify(invocations));
+  assert.ok(invocations.every((args) => args.includes("-headless")), JSON.stringify(invocations));
 });
 
 test("diagram commands use one headless PlantUML batch after the version gate", () => {
@@ -367,8 +367,9 @@ test("diagram commands use one headless PlantUML batch after the version gate", 
   const checked = run(cwd, "diagrams", "check", "--json", { ARCH_LENS_PLANTUML: fake, FAKE_PLANTUML_LOG: checkLog });
   assert.equal(checked.status, 0, checked.stderr || checked.stdout);
   const checkInvocations = invocationLog(checkLog);
-  assert.equal(checkInvocations.length, 2, JSON.stringify(checkInvocations));
+  assert.equal(checkInvocations.length, 4, JSON.stringify(checkInvocations));
   assert.equal(checkInvocations.filter((args) => args.includes("-syntax")).length, 1);
+  assert.equal(checkInvocations.filter((args) => args.includes("-tsvg")).length, 1);
   assert.ok(checkInvocations.every((args) => args.includes("-headless")));
 
   const renderLog = path.join(tempDir(), "render.jsonl");
@@ -381,8 +382,8 @@ test("diagram commands use one headless PlantUML batch after the version gate", 
   assert.equal(renderInvocations.filter((args) => args.includes("-tsvg")).length, 1);
   assert.equal(renderInvocations.filter((args) => args.includes("-syntax")).length, 0);
   assert.ok(renderInvocations.every((args) => args.includes("-headless")));
-  assert.match(fs.readFileSync(path.join(output, "orders/create.sequence.svg"), "utf8"), /PlantUML 0/);
-  assert.match(fs.readFileSync(path.join(output, "orders/order.domain.svg"), "utf8"), /PlantUML 1/);
+  assert.match(fs.readFileSync(path.join(output, "orders/create.sequence.svg"), "utf8"), /viewBox="0 0 800 400"/);
+  assert.match(fs.readFileSync(path.join(output, "orders/order.domain.svg"), "utf8"), /viewBox="0 0 800 400"/);
 
   fs.writeFileSync(path.join(output, "stale.svg"), "stale\n");
   fs.rmSync(path.join(cwd, ".arch-lens/diagrams/orders/order.domain.puml"));
@@ -527,7 +528,7 @@ test("diagrams render rejects source-contained output and does not leave files a
 
   const linkedRepo = workspace();
   writeDiagram(linkedRepo, "safe.puml", diagram("component", "边界安全吗？", "边界", "component Core"));
-  fs.mkdirSync(path.join(linkedRepo, ".arch-lens"), { recursive: true });
+  fs.rmSync(path.join(linkedRepo, ".arch-lens/rendered"), { recursive: true, force: true });
   fs.symlinkSync(path.join(linkedRepo, ".arch-lens/diagrams"), path.join(linkedRepo, ".arch-lens/rendered"));
   assertJsonError(
     run(linkedRepo, "diagrams", "render", "--json", { ARCH_LENS_PLANTUML: fakePlantUml() }),
@@ -550,6 +551,59 @@ test("all read-only diagram commands preserve repository source bytes", () => {
   assert.equal(gitStatus(cwd), "");
 });
 
+test("standard SVG mirrors expose facts and reject missing, stale, invalid and orphan files", () => {
+  const cwd = workspace();
+  const source = diagram("component", "边界如何协作？", "边界", "component Core");
+  writeDiagram(cwd, "core.component.puml", source);
+  const checked = run(cwd, "diagrams", "check", "--json");
+  assert.equal(checked.status, 0, checked.stderr || checked.stdout);
+  const fact = JSON.parse(checked.stdout).svg[0];
+  assert.match(fact.sha256, /^[0-9a-f]{64}$/);
+  assert.deepEqual(fact.viewBox, { minX: 0, minY: 0, width: 800, height: 400 });
+  assert.equal(fact.width, 800);
+  assert.equal(fact.height, 400);
+  assert.equal(fact.aspectRatio, 2);
+
+  const svg = path.join(cwd, ".arch-lens/rendered/core.component.svg");
+  fs.rmSync(svg);
+  assertJsonDiagnostic(run(cwd, "diagrams", "check", "--json"), "SVG_MISSING");
+  fs.writeFileSync(svg, fakeSvg(source));
+  fs.writeFileSync(path.join(cwd, ".arch-lens/diagrams/core.component.puml"), source.replace("component Core", "component ChangedCore"));
+  assertJsonDiagnostic(run(cwd, "diagrams", "check", "--json"), "SVG_STALE");
+  fs.writeFileSync(path.join(cwd, ".arch-lens/diagrams/core.component.puml"), source);
+  fs.writeFileSync(svg, "<svg><text>no dimensions</text></svg>");
+  assertJsonDiagnostic(run(cwd, "diagrams", "check", "--json"), "SVG_DIMENSIONS_MISSING");
+  fs.writeFileSync(svg, fakeSvg(source));
+  fs.writeFileSync(path.join(cwd, ".arch-lens/rendered/orphan.svg"), fakeSvg(source));
+  assertJsonDiagnostic(run(cwd, "diagrams", "check", "--json"), "SVG_ORPHAN");
+});
+
+test("standard render ignores arbitrary renderer overrides and reports aspect-ratio risk without aesthetic claims", () => {
+  const cwd = workspace();
+  const source = diagram("domain", "概念是什么？", "概念", "class Concept");
+  writeDiagram(cwd, "concept.domain.puml", source);
+  fs.rmSync(path.join(cwd, ".arch-lens/rendered"), { recursive: true, force: true });
+  const managed = fakePlantUml();
+  const rendered = run(cwd, "diagrams", "render", "--json", {
+    ARCH_LENS_PLANTUML: path.join(tempDir(), "missing-override"),
+    ARCH_LENS_TEST_MANAGED_PLANTUML: managed
+  });
+  assert.equal(rendered.status, 0, rendered.stderr || rendered.stdout);
+  assert.equal(JSON.parse(rendered.stdout).standardMirror, true);
+
+  const custom = run(cwd, "diagrams", "render", "--output", path.join(tempDir(), "wide"), "--json", {
+    ARCH_LENS_PLANTUML: managed,
+    FAKE_PLANTUML_WIDTH: "2400",
+    FAKE_PLANTUML_HEIGHT: "400"
+  });
+  assert.equal(custom.status, 0, custom.stderr || custom.stdout);
+  const payload = JSON.parse(custom.stdout);
+  assert.equal(payload.standardMirror, false);
+  assert.equal(payload.svg[0].aspectRatio, 6);
+  assert.ok(payload.diagnostics.some((item) => item.code === "SVG_ASPECT_RATIO_EXTREME" && item.severity === "warning"));
+  assert.doesNotMatch(custom.stdout, /清晰|美观|semantic/i);
+});
+
 function workspace() {
   const cwd = gitRepo();
   fs.mkdirSync(path.join(cwd, ".arch-lens/diagrams"), { recursive: true });
@@ -566,6 +620,9 @@ function writeDiagram(cwd, relative, content) {
   const target = path.join(cwd, ".arch-lens/diagrams", relative);
   fs.mkdirSync(path.dirname(target), { recursive: true });
   fs.writeFileSync(target, content);
+  const rendered = path.join(cwd, ".arch-lens/rendered", relative.replace(/\.puml$/i, ".svg"));
+  fs.mkdirSync(path.dirname(rendered), { recursive: true });
+  fs.writeFileSync(rendered, fakeSvg(content));
   return target;
 }
 
@@ -599,11 +656,11 @@ if (args.includes("-syntax")) {
 }
 if (source.includes("RENDER_ERROR")) { console.error("render failed"); process.exit(2); }
 if (source.includes("ERROR_SVG")) { process.stdout.write('<svg><text>Cannot find Graphviz</text></svg>'); process.exit(0); }
-const diagrams = (source.match(/@startuml\\b/gi) ?? []).length;
-const rendered = process.env.FAKE_PLANTUML_WRONG_SVG_COUNT && diagrams > 1 ? diagrams - 1 : diagrams;
-for (let index = 0; index < rendered; index += 1) {
-  process.stdout.write('<svg xmlns="http://www.w3.org/2000/svg"><text>PlantUML ' + index + '</text></svg>');
-}
+const diagrams = [...source.matchAll(/@startuml\\b[\\s\\S]*?@enduml/gi)].map((match) => match[0]);
+const rendered = process.env.FAKE_PLANTUML_WRONG_SVG_COUNT && diagrams.length > 1 ? diagrams.slice(0, -1) : diagrams;
+const width = process.env.FAKE_PLANTUML_WIDTH ?? "800";
+const height = process.env.FAKE_PLANTUML_HEIGHT ?? "400";
+for (const diagram of rendered) process.stdout.write('<svg xmlns="http://www.w3.org/2000/svg" width="' + width + 'px" height="' + height + 'px" viewBox="0 0 ' + width + ' ' + height + '"><text>' + diagram.length + '</text></svg>');
 `);
   fs.chmodSync(target, 0o755);
   return target;
@@ -617,8 +674,8 @@ if (args.length === 1 && args[0] === "-version") { console.error('openjdk versio
 if (args.includes("-version")) { console.log("PlantUML version 1.2026.6"); process.exit(0); }
 const source = require("node:fs").readFileSync(0, "utf8");
 if (args.includes("-syntax")) { console.log("CLASS"); process.exit(0); }
-const count = (source.match(/@startuml\\b/gi) ?? []).length;
-for (let index = 0; index < count; index += 1) process.stdout.write('<svg xmlns="http://www.w3.org/2000/svg"><text>managed</text></svg>');
+const diagrams = [...source.matchAll(/@startuml\\b[\\s\\S]*?@enduml/gi)].map((match) => match[0]);
+for (const diagram of diagrams) process.stdout.write('<svg xmlns="http://www.w3.org/2000/svg" width="800px" height="400px" viewBox="0 0 800 400"><text>' + diagram.length + '</text></svg>');
 `);
   fs.chmodSync(target, 0o755);
   return target;
@@ -655,11 +712,18 @@ function gitStatus(cwd) {
 
 function run(cwd, ...raw) {
   const env = typeof raw.at(-1) === "object" ? raw.pop() : {};
+  const managed = env.ARCH_LENS_TEST_MANAGED_PLANTUML ?? (env.ARCH_LENS_TEST_SKIP_RUNTIME === "" ? null : env.ARCH_LENS_PLANTUML ?? fakePlantUml());
+  const testEnv = { ...process.env, ARCH_LENS_TEST_MODE: "1", ARCH_LENS_TEST_SKIP_RUNTIME: "1", ...env };
+  if (managed) testEnv.ARCH_LENS_TEST_MANAGED_PLANTUML = managed;
   return spawnSync(process.execPath, [cli, ...raw], {
     cwd,
     encoding: "utf8",
-    env: { ...process.env, ARCH_LENS_TEST_MODE: "1", ARCH_LENS_TEST_SKIP_RUNTIME: "1", ...env }
+    env: testEnv
   });
+}
+
+function fakeSvg(content) {
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="800px" height="400px" viewBox="0 0 800 400"><text>${content.trimEnd().length}</text></svg>`;
 }
 
 function assertJsonError(result, pattern) {

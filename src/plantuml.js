@@ -11,6 +11,7 @@ import {
   relativePosix,
   replaceDirectoryAtomically,
   resolvePotentialRealPath,
+  sha256,
   writeTreeFile
 } from "./core.js";
 import { findExecutable, validManagedPlantUmlPath } from "./plantuml-runtime.js";
@@ -52,10 +53,17 @@ export function checkDiagrams(cwd, requestedFiles = []) {
   const records = files.map((file) => ({ path: relativePosix(workspace.root, file), content: fs.readFileSync(file), file }));
   const diagnostics = inspectDiagramRecords(records);
   if (diagnostics.some(isError)) throw operationError("PlantUML 离线资源策略检查失败。", diagnostics);
-  if (records.length === 0) return { valid: true, files: [], diagnostics };
-  validateSyntax(workspace.root, records, diagnostics);
+  if (records.length > 0) validateSyntax(workspace.root, records, diagnostics);
+  const mirror = validateSvgMirror(workspace.root, records.map((record) => ({
+    ...record,
+    svgFile: path.join(workspace.root, ".arch-lens", "rendered", path.relative(workspace.diagramsRoot, record.file).replace(/\.puml$/i, ".svg"))
+  })), {
+    renderedRoot: path.join(workspace.root, ".arch-lens", "rendered"),
+    fullMirror: !requestedFiles || requestedFiles.length === 0
+  });
+  diagnostics.push(...mirror.diagnostics);
   if (diagnostics.some(isError)) throw operationError("PlantUML 检查失败。", diagnostics);
-  return { valid: true, files: records.map((record) => record.path), diagnostics };
+  return { valid: true, files: records.map((record) => record.path), svg: mirror.facts, diagnostics: diagnostics.sort(compareDiagnostics) };
 }
 
 export function renderDiagrams(cwd, requestedFiles = [], output) {
@@ -67,17 +75,21 @@ export function renderDiagrams(cwd, requestedFiles = [], output) {
   const diagnostics = inspectDiagramRecords(records);
   if (diagnostics.some(isError)) throw operationError("PlantUML 离线资源策略检查失败。", diagnostics);
   const fullMirror = !requestedFiles || requestedFiles.length === 0;
+  const standardMirror = !output;
   if (records.length === 0) {
     if (fullMirror) fs.rmSync(outputRoot, { recursive: true, force: true });
-    return { output: outputRoot, rendered: [], diagnostics };
+    return { output: outputRoot, standardMirror, rendered: [], svg: [], diagnostics };
   }
-  const svgs = renderDiagramRecords(workspace.root, records, diagnostics);
+  const svgs = renderDiagramRecords(workspace.root, records, diagnostics, { managedOnly: standardMirror });
   const pending = records.map((record, index) => {
     const relative = path.relative(workspace.diagramsRoot, record.file).replace(/\.puml$/i, ".svg");
     const target = path.join(outputRoot, relative);
     assertOutputOutsideSource(workspace.diagramsRoot, target);
     return { source: record.path, output: target, svg: svgs[index] };
   });
+  const facts = pending.map((item) => svgFacts(item.svg, item.output, workspace.root));
+  diagnostics.push(...facts.flatMap((item) => item.diagnostics));
+  if (diagnostics.some(isError)) throw operationError("PlantUML 生成的 SVG 不符合标准镜像合同。", diagnostics.sort(compareDiagnostics));
   if (fullMirror) {
     replaceDirectoryAtomically(outputRoot, (temporary) => {
       for (const item of pending) {
@@ -88,7 +100,13 @@ export function renderDiagrams(cwd, requestedFiles = [], output) {
   } else {
     for (const item of pending) atomicWrite(item.output, item.svg);
   }
-  return { output: outputRoot, rendered: pending.map(({ source, output: renderedOutput }) => ({ source, output: renderedOutput })), diagnostics };
+  return {
+    output: outputRoot,
+    standardMirror,
+    rendered: pending.map(({ source, output: renderedOutput }) => ({ source, output: renderedOutput })),
+    svg: facts,
+    diagnostics: diagnostics.sort(compareDiagnostics)
+  };
 }
 
 export function validateDiagramRecords(root, records, { syntax = true } = {}) {
@@ -97,12 +115,12 @@ export function validateDiagramRecords(root, records, { syntax = true } = {}) {
   return diagnostics.sort(compareDiagnostics);
 }
 
-export function renderDiagramRecords(root, records, diagnostics = []) {
+export function renderDiagramRecords(root, records, diagnostics = [], { managedOnly = false } = {}) {
   const policyDiagnostics = inspectDiagramRecords(records);
   diagnostics.push(...policyDiagnostics);
   if (diagnostics.some(isError)) throw operationError("PlantUML 离线资源策略检查失败。", diagnostics.sort(compareDiagnostics));
   if (records.length === 0) return [];
-  const runner = resolvePlantUmlRunner();
+  const runner = resolvePlantUmlRunner({ managedOnly });
   requireSupportedPlantUml(runner, root);
   const args = ["-tsvg", "-pipe", "-failfast2", "-charset", "UTF-8"];
   const batch = runPlantUml(runner, args, { cwd: root, input: diagramBatch(records), encoding: null });
@@ -114,6 +132,72 @@ export function renderDiagramRecords(root, records, diagnostics = []) {
   if (batch.status === 0) diagnostics.push(diagnostic("error", "PLANTUML_OUTPUT_PROTOCOL", null, null, `PlantUML 批量渲染返回 ${svgs?.length ?? 0} 个 SVG，其中 ${validCount} 个有效；预期 ${records.length} 个。`));
   if (!diagnostics.some(isError)) diagnostics.push(diagnostic("error", "PLANTUML_BATCH_RENDER", null, null, commandMessage(batch) || "PlantUML 批量渲染失败。"));
   throw operationError("PlantUML 渲染失败。", diagnostics.sort(compareDiagnostics));
+}
+
+export function validateSvgMirror(root, records, { renderedRoot = null, fullMirror = false } = {}) {
+  const diagnostics = [];
+  const facts = [];
+  const expectedPaths = new Set(records.map((record) => path.resolve(record.svgFile)));
+
+  if (renderedRoot && fs.existsSync(renderedRoot)) {
+    if (fs.lstatSync(renderedRoot).isSymbolicLink() || !fs.statSync(renderedRoot).isDirectory()) {
+      diagnostics.push(diagnostic("error", "SVG_MIRROR_INVALID", relativePosix(root, renderedRoot), null, "标准 SVG 镜像必须是真实目录且不得是符号链接。"));
+    } else if (fullMirror) {
+      for (const file of discoverSvgFiles(renderedRoot, root, diagnostics)) {
+        if (!expectedPaths.has(path.resolve(file))) diagnostics.push(diagnostic("error", "SVG_ORPHAN", relativePosix(root, file), null, "标准 SVG 没有对应的 .puml 源文件。"));
+      }
+    }
+  }
+
+  for (const record of records) {
+    const svgPath = record.svgFile;
+    const relative = relativePosix(root, svgPath);
+    if (!fs.existsSync(svgPath)) {
+      diagnostics.push(diagnostic("error", "SVG_MISSING", relative, null, `缺少 ${record.path} 对应的标准 SVG。`));
+      continue;
+    }
+    if (fs.lstatSync(svgPath).isSymbolicLink() || !fs.statSync(svgPath).isFile()) {
+      diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relative, null, "标准 SVG 必须是普通文件且不得是符号链接。"));
+      continue;
+    }
+    const fact = svgFacts(fs.readFileSync(svgPath), svgPath, root);
+    facts.push(fact);
+    diagnostics.push(...fact.diagnostics);
+  }
+
+  if (records.length > 0 && !diagnostics.some(isError)) {
+    const expected = renderDiagramRecords(root, records, diagnostics, { managedOnly: true });
+    records.forEach((record, index) => {
+      const actual = fs.readFileSync(record.svgFile);
+      if (!actual.equals(expected[index])) diagnostics.push(diagnostic("error", "SVG_STALE", relativePosix(root, record.svgFile), null, `标准 SVG 与锁定受管 PlantUML 对 ${record.path} 的输出不一致。`));
+    });
+  }
+  return { facts, diagnostics: diagnostics.sort(compareDiagnostics) };
+}
+
+export function svgFacts(svg, file, root = process.cwd()) {
+  const bytes = Buffer.isBuffer(svg) ? svg : Buffer.from(svg);
+  const source = bytes.toString("utf8");
+  const diagnostics = [];
+  const label = path.isAbsolute(file) ? relativePosix(root, file) : file;
+  if (!isUsableSvg(bytes)) diagnostics.push(diagnostic("error", "SVG_INVALID", label, null, "文件不是可用的 PlantUML SVG。"));
+  const rootTag = source.match(/<svg\b([^>]*)>/i)?.[1] ?? "";
+  const attributes = parseXmlAttributes(rootTag);
+  const viewBoxValues = attributes.viewBox?.trim().split(/[\s,]+/).map(Number);
+  const viewBox = viewBoxValues?.length === 4 && viewBoxValues.every(Number.isFinite)
+    ? { minX: viewBoxValues[0], minY: viewBoxValues[1], width: viewBoxValues[2], height: viewBoxValues[3] }
+    : null;
+  const width = parseSvgLength(attributes.width);
+  const height = parseSvgLength(attributes.height);
+  const ratioWidth = width ?? viewBox?.width ?? null;
+  const ratioHeight = height ?? viewBox?.height ?? null;
+  if (!viewBox || width === null || height === null) diagnostics.push(diagnostic("error", "SVG_DIMENSIONS_MISSING", label, null, "标准 SVG 必须声明可解析的 viewBox、width 和 height。"));
+  if ((viewBox && (viewBox.width <= 0 || viewBox.height <= 0)) || (width !== null && width <= 0) || (height !== null && height <= 0)) {
+    diagnostics.push(diagnostic("error", "SVG_DIMENSIONS_NON_POSITIVE", label, null, "标准 SVG 的 viewBox、width 和 height 必须为正数。"));
+  }
+  const aspectRatio = ratioWidth !== null && ratioHeight > 0 ? ratioWidth / ratioHeight : null;
+  if (aspectRatio !== null && (aspectRatio > 4 || aspectRatio < 0.25)) diagnostics.push(diagnostic("warning", "SVG_ASPECT_RATIO_EXTREME", label, null, `SVG 宽高比 ${formatNumber(aspectRatio)} 较极端，需要人工检查阅读顺序和密度。`));
+  return { path: label, sha256: sha256(bytes), viewBox, width, height, aspectRatio, diagnostics };
 }
 
 function resolveRequestedDiagrams(workspace, requested) {
@@ -163,7 +247,23 @@ function validateSyntax(root, records, diagnostics) {
   if (diagnostics.filter(isError).length === errorsBefore) diagnostics.push(diagnostic("error", "PLANTUML_BATCH_CHECK", null, null, commandMessage(batch) || "PlantUML 批量语法检查失败。"));
 }
 
-function resolvePlantUmlRunner() {
+function resolvePlantUmlRunner({ managedOnly = false } = {}) {
+  if (managedOnly) {
+    const managed = validManagedPlantUmlPath();
+    const testManaged = process.env.ARCH_LENS_TEST_MODE === "1" ? process.env.ARCH_LENS_TEST_MANAGED_PLANTUML?.trim() : null;
+    if (testManaged) {
+      const executable = path.resolve(testManaged);
+      if (!fs.existsSync(executable) || fs.lstatSync(executable).isSymbolicLink() || !fs.statSync(executable).isFile()) throw new Error(`测试受管 PlantUML 不存在：${executable}`);
+      return { command: executable, prefix: [] };
+    }
+    const jar = managed;
+    if (!jar || !fs.existsSync(jar) || fs.lstatSync(jar).isSymbolicLink() || !fs.statSync(jar).isFile()) {
+      throw new Error("标准 SVG 必须使用锁定的受管 PlantUML；请先运行 arch-lens init。ARCH_LENS_PLANTUML 不能用于标准镜像。");
+    }
+    const java = findExecutable(process.platform === "win32" ? "java.exe" : "java");
+    if (!java) throw new Error("受管 PlantUML 已安装，但 PATH 中未找到 Java 21 或更高版本。");
+    return { command: java, prefix: ["-Djava.awt.headless=true", "-jar", jar] };
+  }
   const configured = process.env.ARCH_LENS_PLANTUML?.trim();
   if (configured) {
     const resolved = path.resolve(configured);
@@ -244,6 +344,38 @@ function commandMessage(result) {
 function isUsableSvg(svg) {
   const source = svg.toString("utf8");
   return source.slice(0, 4096).includes("<svg") && !/(?:Cannot find Graphviz|Dot executable does not exist|Syntax Error\?|An error has occurred|No valid @start)/i.test(source);
+}
+
+function discoverSvgFiles(root, workspaceRoot, diagnostics) {
+  const files = [];
+  const visit = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name, "en"))) {
+      const target = path.join(directory, entry.name);
+      if (entry.isSymbolicLink()) diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relativePosix(workspaceRoot, target), null, "标准 SVG 镜像不得包含符号链接。"));
+      else if (entry.isDirectory()) visit(target);
+      else if (entry.isFile() && entry.name.toLowerCase().endsWith(".svg")) files.push(target);
+      else if (entry.isFile()) diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relativePosix(workspaceRoot, target), null, "标准 SVG 镜像只允许 .svg 文件。"));
+      else diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relativePosix(workspaceRoot, target), null, "标准 SVG 镜像不允许特殊文件。"));
+    }
+  };
+  visit(root);
+  return files;
+}
+
+function parseXmlAttributes(source) {
+  const attributes = {};
+  for (const match of source.matchAll(/([:\w-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g)) attributes[match[1]] = match[2] ?? match[3] ?? "";
+  return attributes;
+}
+
+function parseSvgLength(value) {
+  if (typeof value !== "string") return null;
+  const match = value.trim().match(/^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:px|pt|pc|mm|cm|in)?$/i);
+  return match ? Number(match[1]) : null;
+}
+
+function formatNumber(value) {
+  return Number(value.toFixed(4)).toString();
 }
 
 function splitSvgStream(output) {

@@ -26,7 +26,8 @@ npx @spec-alchemy/arch-lens@draft capabilities --json
 - 由 Skill 负责理解、建模、方案取舍和语义审查。
 - 由 CLI 提供文件、Git、摘要和 PlantUML 的确定性校验。
 - 通过 Change Pack 记录问题、决策、任务、人工批准和实现证据。
-- 通过本地 PlantUML 和 IDE 预览图形化审查模型。
+- 每个 worktree 只推进一个活动 Change Pack；并行变更使用独立 branch/worktree。
+- 通过受版本控制的标准 SVG 和逐图视觉结论审查实际渲染结果。
 
 ## 快速开始
 
@@ -53,19 +54,21 @@ close change
 
 典型变更先形成问题、范围、决策和最少必要的 PlantUML 候选。人类审查模型并批准后，CLI 提升候选并形成 model-only commit；AI 再实施代码、核对验收标准和测试证据，最后由人类验收并归档 Change Pack。
 
+同一 Git worktree 最多存在一个活动 Change Pack。并行贡献者在独立 branch/worktree 中工作，进入目标分支时逐个集成；若 `baseCommit` 后已批准模型发生变化，先同步 Git，再运行 `arch-lens change refresh-base <id>` 并重新审查。
+
 ## 工作区
 
 ```text
 .arch-lens/
 ├── principles.md                # 项目目的、建模边界和质量门禁
 ├── diagrams/**/*.puml           # 已批准业务模型
+├── rendered/**/*.svg            # 已批准模型的受版本控制标准镜像
 ├── changes/
-│   ├── <change-id>/             # 活动 Change Pack 与候选 overlay
+│   ├── <change-id>/             # 唯一活动 Change Pack、候选 overlay 与 SVG
 │   └── archive/                 # 完成后的 Change Pack
-└── rendered/                    # 按需生成的 Git 忽略 SVG
 ```
 
-PlantUML 是唯一可编辑的业务模型。Change Pack 记录上下文和证据，不复制图中的实体、关系或流程；SVG 是可再生成的审查材料。
+PlantUML 是唯一可编辑的业务模型。每个标准 `.puml` 都有由锁定受管 PlantUML 生成的同路径 SVG；SVG 进入 Git 以支持 fresh clone 和历史审查，但仍是不可手工维护的派生材料。Change Pack 记录上下文和证据，不复制图中的实体、关系或流程。
 
 ## CLI
 
@@ -73,22 +76,23 @@ PlantUML 是唯一可编辑的业务模型。Change Pack 记录上下文和证�
 arch-lens capabilities [--json]
 arch-lens init [--json]
 arch-lens diagrams list|check|render [options]
-arch-lens change new|status|validate|diff|render [options]
+arch-lens change new|status|validate|diff|render|refresh-base [options]
 arch-lens change apply-model|record-approval|evidence|archive [options]
 arch-lens install-agent codex --scope project|global
 ```
 
 Skill 负责语义判断，CLI 负责可计算事实。设计批准和完成验收都来自人类明确决定。
 
-## PlantUML 预览
+## PlantUML 审查
 
-每张 `.puml` 都是自包含文件，适合直接使用 VS Code 或 JetBrains 的 PlantUML 插件预览。需要独立审查材料时运行：
+每张 `.puml` 都是自包含文件，也适合用 VS Code 或 JetBrains 的 PlantUML 插件预览。标准审查材料通过以下命令刷新：
 
 ```sh
-node bin/arch-lens.js diagrams render --output .arch-lens/rendered
+node bin/arch-lens.js diagrams render
+node bin/arch-lens.js diagrams check
 ```
 
-生成的 SVG 位于 Git 忽略目录，不构成第二份模型真相。
+标准 SVG 由锁定运行时原子生成并进入 Git；检查会在内存中重渲染并比较精确字节，同时报告 SHA-256、viewBox、宽高和宽高比。AI 或人类仍必须逐张打开 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；CLI 不会宣称图面美观或语义正确。
 
 ## 开发
 

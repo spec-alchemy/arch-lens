@@ -118,7 +118,7 @@ function isManagedInitPath(entry) {
 }
 
 function agentsMarker() {
-  return `${MARKER_START}\n本项目使用 Arch Lens draft workflowProtocol ${WORKFLOW_PROTOCOL}；Skill 负责业务建模与语义审查，CLI 只提供确定性辅助能力。\n\n- 修改建模资产前，Skill 必须先执行 \`arch-lens capabilities --json\` 并确认协议兼容。\n- 已批准的业务模型位于 \`.arch-lens/diagrams/**/*.puml\`；未批准候选只位于对应 Change Pack 的 \`diagrams/\` overlay。\n- 持久建模默认一张主视图、通常最多三张；第四张起须逐张论证，并在生成前取得人类明确同意。\n- SVG 只在显式 render 时生成到与源图相邻层级的 Git 忽略 \`rendered/\` 镜像，也可直接使用 IDE 预览。\n- 任何持久 PlantUML 变更必须进入 Change Pack，并在实现代码前获得人类设计批准、\`change apply-model\` 和 model-only commit。\n- AI 不得自行记录设计或完成批准；实现后必须对照批准模型、代码 diff、测试和 AC 做语义审查。\n- 规范 Skill 位于 \`.agents/skills/arch-lens/\`。\n${MARKER_END}`;
+  return `${MARKER_START}\n本项目使用 Arch Lens draft workflowProtocol ${WORKFLOW_PROTOCOL}；Skill 负责业务建模与语义审查，CLI 只提供确定性辅助能力。\n\n- 修改建模资产前，Skill 必须先执行 \`arch-lens capabilities --json\` 并确认协议兼容。\n- 每个 Git worktree 最多一个活动 Change Pack；并行变更使用独立 branch/worktree，目标分支逐个集成。\n- 已批准的业务模型位于 \`.arch-lens/diagrams/**/*.puml\`；未批准候选只位于对应 Change Pack 的 \`diagrams/\` overlay。\n- 持久建模默认一张主视图、通常最多三张；第四张起须逐张论证，并在生成前取得人类明确同意。\n- 每个标准 \`.puml\` 必须有受版本控制且由锁定受管 PlantUML 生成的同路径 \`rendered/**/*.svg\`；SVG 是派生审查产物，PlantUML 仍是唯一业务模型。\n- review-model 必须逐张打开当前 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；任一结果不是 PASS 时不得请求设计批准。\n- 任何持久 PlantUML 变更必须进入 Change Pack，并在实现代码前获得人类设计批准、\`change apply-model\` 和 model-only commit。\n- AI 不得自行记录设计或完成批准；实现后必须对照批准模型、代码 diff、测试和 AC 做语义审查。\n- 规范 Skill 位于 \`.agents/skills/arch-lens/\`。\n${MARKER_END}`;
 }
 
 function hasManagedMarker(file) {
@@ -139,13 +139,14 @@ function upsertManagedMarker(file, marker) {
 
 function updateGitignore(root) {
   const target = path.join(root, ".gitignore");
-  const rules = [".arch-lens/rendered/", ".arch-lens/changes/**/rendered/"];
+  const obsoleteRules = new Set([".arch-lens/rendered/", ".arch-lens/changes/**/rendered/"]);
   const current = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : "";
-  const existing = new Set(current.split(/\r?\n/));
-  const missing = rules.filter((rule) => !existing.has(rule));
-  if (missing.length === 0) return;
-  const prefix = current && !current.endsWith("\n") ? "\n" : "";
-  atomicWrite(target, Buffer.from(`${current}${prefix}${missing.join("\n")}\n`));
+  const lines = current.split(/\r?\n/);
+  const filtered = lines.filter((line) => !obsoleteRules.has(line));
+  if (filtered.length === lines.length) return;
+  while (filtered.length > 1 && filtered.at(-1) === "" && filtered.at(-2) === "") filtered.pop();
+  const next = filtered.join("\n");
+  atomicWrite(target, Buffer.from(next && !next.endsWith("\n") ? `${next}\n` : next));
 }
 
 function writeExclusiveIfMissing(file, content) {

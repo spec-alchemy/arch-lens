@@ -8,7 +8,7 @@ import {
   localizeCommanderError,
   printJson
 } from "./core.js";
-import { applyModel, archiveChange, changeEvidence, changeStatus, createChange, diffChange, recordApproval, renderChange, validateChangeCommand } from "./change-pack.js";
+import { applyModel, archiveChange, changeEvidence, changeStatus, createChange, diffChange, recordApproval, refreshChangeBase, renderChange, validateChangeCommand } from "./change-pack.js";
 import { checkDiagrams, listDiagrams, renderDiagrams } from "./plantuml.js";
 import { initWorkspace, installAgent } from "./workspace.js";
 
@@ -114,10 +114,17 @@ export async function runCli(argv = process.argv) {
     }));
   change.command("render").argument("<id>", "Change ID")
     .option("--json", "输出机器可读 JSON")
-    .description("按需生成与候选 diagrams 路径一致的纯 SVG 镜像。")
+    .description("使用锁定受管 PlantUML 原子刷新候选标准 SVG 镜像。")
     .action((id, options) => runOrExit(options.json, () => {
       const result = renderChange(process.cwd(), id);
       emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, result.rendered.length === 0 ? "该变更没有可渲染的候选图。" : `已生成 ${result.rendered.length} 个候选 SVG 到 ${result.output}。`);
+    }));
+  change.command("refresh-base").argument("<id>", "Change ID")
+    .option("--json", "输出机器可读 JSON")
+    .description("把已同步的当前 HEAD 显式记录为新模型基线，并使既有设计批准失效。")
+    .action((id, options) => runOrExit(options.json, () => {
+      const result = refreshChangeBase(process.cwd(), id);
+      emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, `已把 Change Pack ${id} 的 baseCommit 刷新为 ${result.baseCommit}；必须重新审查设计。`);
     }));
   change.command("apply-model").argument("<id>", "Change ID")
     .option("--json", "输出机器可读 JSON")
@@ -194,8 +201,11 @@ function formatStatus(result) {
   if (result.changes) return result.changes.length === 0 ? "没有活动 Change Pack。" : result.changes.map((item) => `${item.id}\tdesign=${item.designApproval}\tcompletion=${item.completionApproval}\ttasks=${item.tasks.completed}/${item.tasks.total}`).join("\n");
   return [
     `Change Pack: ${result.id}`,
+    `Model baseline: ${result.baseline.state}`,
     `Design approval: ${result.designApproval.state}`,
     `Completion approval: ${result.completionApproval.state}`,
+    `SVG mirror: ${result.svg.valid === true ? "current" : result.svg.valid === false ? "invalid" : "not checked"} (${result.svg.files.length} files)`,
+    `Visual review: ${result.visualReview.pass}/${result.visualReview.total} PASS`,
     `Tasks: ${result.tasks.completed}/${result.tasks.total}`,
     `Open questions: ${result.openQuestions.open}/${result.openQuestions.total}`,
     `Archive eligible: ${result.archiveEligible}`
