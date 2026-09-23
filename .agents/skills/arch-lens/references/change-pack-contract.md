@@ -91,4 +91,4 @@ arch-lens change evidence <id> [--json]
 arch-lens change archive <id> [--json]
 ```
 
-`status` 和 `validate` 不做语义结论，只报告基线、SVG 哈希、viewBox、宽高、宽高比和稳定风险诊断；`diff` 只返回 base/candidate 文本差异；`render` 使用锁定受管运行时生成标准候选 SVG；`refresh-base` 只更新已同步 HEAD 的基线事实；`apply-model` 只在现有人工批准有效时执行确定性文件提升；`evidence` 只读取 Git、任务和 AC 事实；`record-approval` 只记录当前会话中人类已经作出的决定。
+`status` 和 `validate` 不做语义结论，只报告基线、源图 note 统计、SVG 哈希、viewBox、宽高、宽高比和稳定风险诊断；`diff` 只返回 base/candidate 文本差异；`render` 使用锁定受管运行时生成标准候选 SVG；`refresh-base` 只更新已同步 HEAD 的基线事实；`apply-model` 只在现有人工批准有效时执行确定性文件提升；`evidence` 只读取 Git、任务和 AC 事实；`record-approval` 只记录当前会话中人类已经作出的决定。

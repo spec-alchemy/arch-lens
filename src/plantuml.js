@@ -20,6 +20,11 @@ import { requireDiagramWorkspace } from "./repository.js";
 const MAX_PLANTUML_OUTPUT = 32 * 1024 * 1024;
 export const MIN_PLANTUML_VERSION = "1.2026.6";
 const DIAGRAM_TYPES = new Set(["use-case", "domain", "activity", "sequence", "component", "state"]);
+const NOTE_BUDGETS = Object.freeze({ "use-case": 3, domain: 3, activity: 3, sequence: 3, component: 3, state: 2 });
+const DEFAULT_NOTE_BUDGET = 3;
+const MAX_NOTE_CONTENT_LINES = 3;
+const MAX_NOTE_CHARACTERS = 120;
+const NOTE_LINE_SHARE_RISK = 0.1;
 
 export function discoverDiagrams(root) {
   if (!fs.existsSync(root)) return [];
@@ -51,7 +56,8 @@ export function checkDiagrams(cwd, requestedFiles = []) {
   const workspace = requireDiagramWorkspace(cwd);
   const files = resolveRequestedDiagrams(workspace, requestedFiles);
   const records = files.map((file) => ({ path: relativePosix(workspace.root, file), content: fs.readFileSync(file), file }));
-  const diagnostics = inspectDiagramRecords(records);
+  const inspection = inspectDiagramRecords(records);
+  const diagnostics = inspection.diagnostics;
   if (diagnostics.some(isError)) throw operationError("PlantUML 离线资源策略检查失败。", diagnostics);
   if (records.length > 0) validateSyntax(workspace.root, records, diagnostics);
   const mirror = validateSvgMirror(workspace.root, records.map((record) => ({
@@ -59,11 +65,12 @@ export function checkDiagrams(cwd, requestedFiles = []) {
     svgFile: path.join(workspace.root, ".arch-lens", "rendered", path.relative(workspace.diagramsRoot, record.file).replace(/\.puml$/i, ".svg"))
   })), {
     renderedRoot: path.join(workspace.root, ".arch-lens", "rendered"),
-    fullMirror: !requestedFiles || requestedFiles.length === 0
+    fullMirror: !requestedFiles || requestedFiles.length === 0,
+    inspectPolicy: false
   });
   diagnostics.push(...mirror.diagnostics);
   if (diagnostics.some(isError)) throw operationError("PlantUML 检查失败。", diagnostics);
-  return { valid: true, files: records.map((record) => record.path), svg: mirror.facts, diagnostics: diagnostics.sort(compareDiagnostics) };
+  return { valid: true, files: records.map((record) => record.path), source: inspection.facts, svg: mirror.facts, diagnostics: diagnostics.sort(compareDiagnostics) };
 }
 
 export function renderDiagrams(cwd, requestedFiles = [], output) {
@@ -72,15 +79,16 @@ export function renderDiagrams(cwd, requestedFiles = [], output) {
   const outputRoot = output ? path.resolve(cwd, output) : path.join(workspace.root, ".arch-lens", "rendered");
   assertOutputOutsideSource(workspace.diagramsRoot, outputRoot);
   const records = files.map((file) => ({ path: relativePosix(workspace.root, file), content: fs.readFileSync(file), file }));
-  const diagnostics = inspectDiagramRecords(records);
+  const inspection = inspectDiagramRecords(records);
+  const diagnostics = inspection.diagnostics;
   if (diagnostics.some(isError)) throw operationError("PlantUML 离线资源策略检查失败。", diagnostics);
   const fullMirror = !requestedFiles || requestedFiles.length === 0;
   const standardMirror = !output;
   if (records.length === 0) {
     if (fullMirror) fs.rmSync(outputRoot, { recursive: true, force: true });
-    return { output: outputRoot, standardMirror, rendered: [], svg: [], diagnostics };
+    return { output: outputRoot, standardMirror, rendered: [], source: inspection.facts, svg: [], diagnostics };
   }
-  const svgs = renderDiagramRecords(workspace.root, records, diagnostics, { managedOnly: standardMirror });
+  const svgs = renderDiagramRecords(workspace.root, records, diagnostics, { managedOnly: standardMirror, inspectPolicy: false });
   const pending = records.map((record, index) => {
     const relative = path.relative(workspace.diagramsRoot, record.file).replace(/\.puml$/i, ".svg");
     const target = path.join(outputRoot, relative);
@@ -104,20 +112,25 @@ export function renderDiagrams(cwd, requestedFiles = [], output) {
     output: outputRoot,
     standardMirror,
     rendered: pending.map(({ source, output: renderedOutput }) => ({ source, output: renderedOutput })),
+    source: inspection.facts,
     svg: facts,
     diagnostics: diagnostics.sort(compareDiagnostics)
   };
 }
 
 export function validateDiagramRecords(root, records, { syntax = true } = {}) {
-  const diagnostics = inspectDiagramRecords(records);
-  if (syntax && records.length > 0 && !diagnostics.some(isError)) validateSyntax(root, records, diagnostics);
-  return diagnostics.sort(compareDiagnostics);
+  return validateDiagramRecordsWithFacts(root, records, { syntax }).diagnostics;
 }
 
-export function renderDiagramRecords(root, records, diagnostics = [], { managedOnly = false } = {}) {
-  const policyDiagnostics = inspectDiagramRecords(records);
-  diagnostics.push(...policyDiagnostics);
+export function validateDiagramRecordsWithFacts(root, records, { syntax = true } = {}) {
+  const inspection = inspectDiagramRecords(records);
+  const diagnostics = [...inspection.diagnostics];
+  if (syntax && records.length > 0 && !diagnostics.some(isError)) validateSyntax(root, records, diagnostics);
+  return { facts: inspection.facts, diagnostics: diagnostics.sort(compareDiagnostics) };
+}
+
+export function renderDiagramRecords(root, records, diagnostics = [], { managedOnly = false, inspectPolicy = true } = {}) {
+  if (inspectPolicy) diagnostics.push(...inspectDiagramRecords(records).diagnostics);
   if (diagnostics.some(isError)) throw operationError("PlantUML 离线资源策略检查失败。", diagnostics.sort(compareDiagnostics));
   if (records.length === 0) return [];
   const runner = resolvePlantUmlRunner({ managedOnly });
@@ -134,7 +147,7 @@ export function renderDiagramRecords(root, records, diagnostics = [], { managedO
   throw operationError("PlantUML 渲染失败。", diagnostics.sort(compareDiagnostics));
 }
 
-export function validateSvgMirror(root, records, { renderedRoot = null, fullMirror = false } = {}) {
+export function validateSvgMirror(root, records, { renderedRoot = null, fullMirror = false, inspectPolicy = true } = {}) {
   const diagnostics = [];
   const facts = [];
   const expectedPaths = new Set(records.map((record) => path.resolve(record.svgFile)));
@@ -166,7 +179,7 @@ export function validateSvgMirror(root, records, { renderedRoot = null, fullMirr
   }
 
   if (records.length > 0 && !diagnostics.some(isError)) {
-    const expected = renderDiagramRecords(root, records, diagnostics, { managedOnly: true });
+    const expected = renderDiagramRecords(root, records, diagnostics, { managedOnly: true, inspectPolicy });
     records.forEach((record, index) => {
       const actual = fs.readFileSync(record.svgFile);
       const actualSource = plantUmlSourceToken(actual);
@@ -219,14 +232,17 @@ function resolveRequestedDiagrams(workspace, requested) {
   return [...unique].sort((a, b) => relativePosix(workspace.diagramsRoot, a).localeCompare(relativePosix(workspace.diagramsRoot, b), "en"));
 }
 
-function inspectDiagramRecords(records) {
+export function inspectDiagramRecords(records) {
   const diagnostics = [];
-  for (const record of records) inspectDiagramSource(record.path, record.content.toString("utf8"), diagnostics);
-  return diagnostics.sort(compareDiagnostics);
+  const facts = records
+    .map((record) => inspectDiagramSource(record.path, record.content.toString("utf8"), diagnostics))
+    .sort((a, b) => a.path.localeCompare(b.path, "en"));
+  return { facts, diagnostics: diagnostics.sort(compareDiagnostics) };
 }
 
 function inspectDiagramSource(file, source, diagnostics) {
   const lines = source.split(/\r?\n/);
+  if (lines.at(-1) === "") lines.pop();
   const starts = lines.filter((line) => /^\s*@startuml(?:\s|$)/i.test(line)).length;
   const ends = lines.filter((line) => /^\s*@enduml(?:\s|$)/i.test(line)).length;
   if (starts !== 1 || ends !== 1) diagnostics.push(diagnostic("error", "ONE_DIAGRAM_PER_FILE", file, null, "每个 .puml 文件必须且只能包含一个 @startuml/@enduml 图。"));
@@ -237,6 +253,26 @@ function inspectDiagramSource(file, source, diagnostics) {
     if (/(?:https?|ftp|file|jar):\/\//i.test(line) || /<img\s*:/i.test(line)) diagnostics.push(diagnostic("error", "REMOTE_RESOURCE_FORBIDDEN", file, index + 1, "图集必须离线自包含，禁止 URL、file URI 和外部图片。"));
     if (/^\s*!include/i.test(line) || /^\s*!import\b/i.test(line) || /^\s*!pragma\s+includePath\b/i.test(line)) diagnostics.push(diagnostic("error", "INCLUDE_FORBIDDEN", file, index + 1, "每个 .puml 必须自包含；禁止 include、import 和自定义 include path。"));
   });
+  const notes = parseNotes(lines);
+  const noteCount = notes.length;
+  const noteLineCount = notes.reduce((total, note) => total + (note.endLine - note.startLine + 1), 0);
+  const noteLineShare = lines.length > 0 ? roundRatio(noteLineCount / lines.length) : 0;
+  const maxNoteContentLines = notes.reduce((maximum, note) => Math.max(maximum, note.contentLines), 0);
+  const maxNoteCharacters = notes.reduce((maximum, note) => Math.max(maximum, note.characters), 0);
+  const type = metadata.type && DIAGRAM_TYPES.has(metadata.type) ? metadata.type : null;
+  const noteBudget = NOTE_BUDGETS[type] ?? DEFAULT_NOTE_BUDGET;
+  if (type && noteCount > noteBudget) {
+    diagnostics.push(diagnostic("warning", "NOTE_BUDGET_EXCEEDED", file, notes[0].startLine, `图面 note 数量 ${noteCount} 超过 ${type} 图预算 ${noteBudget}；请将领域不变量、实现细节和重复规则移回 decisions.md 或需求文档。`));
+  }
+  for (const note of notes) {
+    if (note.contentLines > MAX_NOTE_CONTENT_LINES || note.characters > MAX_NOTE_CHARACTERS) {
+      diagnostics.push(diagnostic("warning", "NOTE_TOO_LONG", file, note.startLine, `note 含 ${note.contentLines} 行、${note.characters} 个字符，超过单条上限（${MAX_NOTE_CONTENT_LINES} 行 / ${MAX_NOTE_CHARACTERS} 字符）；请只保留读图必需语义，并可用末行锚定 D0xx/AC-0xx。`));
+    }
+  }
+  if (noteCount > 0 && noteLineShare > NOTE_LINE_SHARE_RISK) {
+    diagnostics.push(diagnostic("warning", "NOTE_LINE_SHARE_HIGH", file, notes[0].startLine, `note 占用 ${noteLineCount}/${lines.length} 行（${formatPercentage(noteLineShare)}），超过 ${formatPercentage(NOTE_LINE_SHARE_RISK)} 风险阈值；请人工复核是否应移出图面。`));
+  }
+  return { path: file, type, lineCount: lines.length, noteBudget, noteCount, noteLineCount, noteLineShare, maxNoteContentLines, maxNoteCharacters };
 }
 
 function validateSyntax(root, records, diagnostics) {
@@ -383,8 +419,83 @@ function parseSvgLength(value) {
   return match ? Number(match[1]) : null;
 }
 
+function parseNotes(lines) {
+  const comments = commentMask(lines);
+  const notes = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    if (comments[index]) continue;
+    const start = parseNoteStart(lines[index]);
+    if (!start) continue;
+    if (!start.block) {
+      const text = start.text.trim();
+      notes.push({ startLine: index + 1, endLine: index + 1, contentLines: text ? 1 : 0, characters: countCharacters(text) });
+      continue;
+    }
+    let end = index + 1;
+    while (end < lines.length && !isNoteEnd(lines[end])) end += 1;
+    const hasEnd = end < lines.length;
+    const contentLines = lines.slice(index + 1, hasEnd ? end : lines.length).map((line) => line.trim()).filter(Boolean);
+    notes.push({
+      startLine: index + 1,
+      endLine: (hasEnd ? end : lines.length - 1) + 1,
+      contentLines: contentLines.length,
+      characters: contentLines.reduce((total, line) => total + countCharacters(line), 0)
+    });
+    index = hasEnd ? end : lines.length;
+  }
+  return notes;
+}
+
+function commentMask(lines) {
+  const comments = new Array(lines.length).fill(false);
+  let block = false;
+  lines.forEach((line, index) => {
+    const trimmed = line.trim();
+    if (block) {
+      comments[index] = true;
+      if (trimmed.includes("'/")) block = false;
+      return;
+    }
+    if (trimmed.startsWith("/'")) {
+      comments[index] = true;
+      if (!trimmed.slice(2).includes("'/")) block = true;
+      return;
+    }
+    if (trimmed.startsWith("'")) comments[index] = true;
+  });
+  return comments;
+}
+
+function parseNoteStart(line) {
+  const trimmed = line.trim();
+  const match = trimmed.match(/^(?:floating\s+)?(?:note|hnote|rnote)\b/i);
+  if (!match) return null;
+  const rest = trimmed.slice(match[0].length);
+  const quoted = rest.match(/^\s*(["`])([\s\S]*?)\1/);
+  if (quoted) return { block: false, text: quoted[2] };
+  if (rest.includes(":")) return { block: false, text: rest.slice(rest.indexOf(":") + 1).trim() };
+  return { block: true, text: "" };
+}
+
+function isNoteEnd(line) {
+  const trimmed = line.trim();
+  return /^@?end\s*note$/i.test(trimmed) || /^end\s*(?:hnote|rnote)$/i.test(trimmed);
+}
+
+function countCharacters(value) {
+  return [...value].length;
+}
+
+function roundRatio(value) {
+  return Number(value.toFixed(4));
+}
+
 function formatNumber(value) {
   return Number(value.toFixed(4)).toString();
+}
+
+function formatPercentage(value) {
+  return `${formatNumber(value * 100)}%`;
 }
 
 function splitSvgStream(output) {

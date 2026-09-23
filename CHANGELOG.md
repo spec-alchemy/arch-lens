@@ -4,7 +4,10 @@
 
 ## Unreleased
 
-后续变化将在下一个版本发布前记录。
+- 新增 `note-budget-v1` 确定性能力：解析 PlantUML note，报告条数、行数、行数占比和单条规模 facts。
+- 新增 `NOTE_BUDGET_EXCEEDED`、`NOTE_TOO_LONG`、`NOTE_LINE_SHARE_HIGH` warning；不会阻塞 `diagrams check` 或 `change validate`。
+- `diagrams check|render` 和 `change status|validate|render --json` 暴露 source facts，供视觉复核引用。
+- Skill 的建模指南和 review-model 流程加入 note 三分法、类型预算和视觉审查记录要求。
 
 ## 0.1.0-alpha.1 - 2026-09-07
 

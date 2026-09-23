@@ -85,8 +85,17 @@ Arch Lens 的目标不是收集架构图，而是降低人理解现状、比较�
 
 - 现状图只画有证据的事实。
 - 候选与批准状态由目录和批准记录表达；标题只描述问题或主题，关键假设写入 Change Pack 或少量 note。
-- 用 note 标记少量高价值约束；大量说明应回到需求或代码文档，不要塞满图面。
+- note 只承载读图必需语义；领域不变量和实现细节回到需求、`decisions.md` 或代码文档，不要塞满图面。
 - 不确定关系不要画成确定关系；把它列为未决问题。
+
+### Note 预算
+
+- 三分法：**读图必需语义**可以留在图面；**领域不变量**写入 `decisions.md`；**实现细节**写入代码或需求文档。后两类不应在多个图之间复制。
+- 类型预算：`domain`、`sequence`、`use-case`、`activity`、`component` 最多 3 条 note；`state` 最多 2 条。预算是上限，不是配额。
+- 单条 note 最多 3 行内容、120 个字符；达到预算也不表示每张图都必须写满 note。
+- note 末行可以锚定 `D0xx` / `AC-0xx` 等稳定引用，但不复述被引用段落；同一规则不得复制到多张图。
+- `diagrams check`、`diagrams render`、`change validate` 和 `change status` 的 JSON 会暴露 `noteCount`、`noteLineCount`、`noteLineShare`、`maxNoteContentLines` 和 `maxNoteCharacters`。
+- CLI 只报告 `NOTE_BUDGET_EXCEEDED`、`NOTE_TOO_LONG`、`NOTE_LINE_SHARE_HIGH` 等 warning 事实；是否删除、改写或接受 note 由人类审查决定。
 
 ### 关系
 
