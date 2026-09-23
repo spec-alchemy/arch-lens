@@ -25,6 +25,14 @@ test("公开基线只呈现当前产品入口并保留合法历史归档", () =>
     assert.match(readme, new RegExp(command.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
   assert.doesNotMatch(readme, /XMI|Viewer|bundle|architecture\.uml|change review|change approve|change verify/);
+  assert.match(readme, /RELEASING\.md/);
+
+  const releasing = read("RELEASING.md");
+  for (const channel of ["alpha", "beta", "rc", "GA"]) assert.match(releasing, new RegExp(`\\b${channel}\\b`));
+  assert.match(releasing, /门禁决定「能不能发」/);
+  assert.match(releasing, /不\*\*采用「正式版每 2 周发一次」的固定日历/);
+  assert.match(releasing, /--tag beta/);
+  assert.match(read("CONTRIBUTING.md"), /RELEASING\.md/);
   assert.doesNotMatch(readme, /\/Users\/|\/private\/tmp|\/tmp\/|worktrees\//);
 
   const diagrams = [];
@@ -54,4 +62,5 @@ test("npm 预览发布保持 scoped 包、next 标签和稳定 CLI 名称", () =
   });
   assert.ok(packageJson.files.includes("CHANGELOG.md"));
   assert.ok(packageJson.files.includes("CONTRIBUTING.md"));
+  assert.ok(packageJson.files.includes("RELEASING.md"));
 });

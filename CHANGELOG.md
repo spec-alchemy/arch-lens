@@ -4,7 +4,8 @@
 
 ## Unreleased
 
-后续变化将在下一个版本发布前记录。
+- 新增 `RELEASING.md`：定义 alpha → beta → rc → GA 的发布通道、质量门禁与 soak 节奏。beta 与 rc 使用 npm `beta` 通道，GA 使用 `latest`。
+- 澄清版本号规则：预发布线内允许破坏性变更且不提升版本号；`0.1.0` 之后的 `0.1.x` 只允许兼容修复。
 
 ## 0.1.0-alpha.3 - 2026-09-23
 

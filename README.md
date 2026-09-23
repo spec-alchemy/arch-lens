@@ -42,7 +42,7 @@ arch-lens diagrams check
 
 `init` 会在用户缓存中安装并校验受管 PlantUML 运行时，然后创建项目级建模工作区。模型始终在本地处理，不上传到远程服务。
 
-预览版发布后，npm 使用 `next` 标签；从受保护 `main` 发布时执行：
+发布通道：alpha 使用 npm `next`，beta 与 rc 使用 `beta`，GA 使用 `latest`；完整规则见 [RELEASING.md](RELEASING.md)。从受保护 `main` 发布时执行：
 
 ```sh
 npm run release:check

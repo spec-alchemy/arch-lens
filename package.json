@@ -38,6 +38,7 @@
     ".agents/skills/arch-lens/",
     "CHANGELOG.md",
     "CONTRIBUTING.md",
+    "RELEASING.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md"
   ]
