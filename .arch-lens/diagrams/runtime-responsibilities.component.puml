@@ -35,18 +35,7 @@ CLI --> Worktree : 校验单变更、基线、摘要、\nSVG freshness 与提交
 ManagedPlantUML --> SVG : 从 .puml 生成视图
 Git --> Worktree : 隔离分支并串行合入
 
-note bottom of Skill
-  逐图检查标签、交叉线、密度、边界和阅读顺序。
-  存在 CONCERNS 或 FAIL 时不得请求设计批准。
-end note
-
-note bottom of CLI
-  报告 SVG 摘要、viewBox、宽高和宽高比等客观事实。
-  不评价设计是否清晰，不创建或合并 Git worktree。
-end note
-
-note bottom of Diagrams
-  PlantUML 是唯一业务模型；SVG 不承载额外语义。
-  两者必须同路径、同步并由设计批准绑定。
-end note
+note bottom of Skill: 逐图视觉审查为 PASS 后才能请求设计批准。
+note bottom of CLI: 只报告确定性事实，不评价设计，也不管理 worktree。
+note bottom of Diagrams: PlantUML 是唯一模型；同路径 SVG 是受批准绑定的派生视图。
 @enduml

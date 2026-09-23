@@ -37,21 +37,7 @@ AcceptImplementation ..> MaintainChange : <<include>>
 AcceptImplementation ..> RecordApproval : <<include>>
 MaintainDiagrams ..> CheckDiagrams : <<include>>
 
-note right of ModelBusiness
-  默认一张主视图，通常最多三张。
-  优先修改已有图并合并相近场景。
-  第四张起逐张说明独立判断价值，
-  生成前由人类明确同意额外成本。
-end note
-
-note right of RecordApproval
-  CLI 只记录已经发生的人工决定。
-  AI 不得自行批准设计或实现。
-end note
-
-note bottom of MaintainChange
-  Change Pack 不复制业务模型：
-  它只保存问题、范围、取舍、
-  任务、批准和验证证据。
-end note
+note right of ModelBusiness: 默认一张主视图，通常最多三张；第四张起须人类明确同意。
+note right of RecordApproval: CLI 只记录人工决定；AI 不得自行批准。
+note bottom of MaintainChange: Change Pack 保存决策与证据，不复制业务模型。
 @enduml

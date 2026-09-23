@@ -1,0 +1,29 @@
+schemaVersion: 1
+workflowProtocol: 1
+design:
+  - reviewer: beacon.sage
+    recordedAt: 2026-09-23T02:58:46.471Z
+    digest: 587515b7d8898d3454361d57a7c202ad393436921bb9f8b89cd780f288613d81
+    baseCommit: f87f547c3265c3ce5a76467126bafdd7b4813710
+    artifacts:
+      - path: .arch-lens/changes/tighten-note-budgets/change.yaml
+        sha256: c4ca157dcd385989fe387ca05977a68ec718d3230382d06dc0b32a95189e7c60
+      - path: .arch-lens/changes/tighten-note-budgets/decisions.md
+        sha256: 5c080c49a41464f3c80d710db32545f6033218c3d6af68da17e0c20d858c82fe
+      - path: .arch-lens/changes/tighten-note-budgets/proposal.md
+        sha256: 77b588667e508b3c34c6d452491e98c05ab3cb22e4e94bae604da738657e8808
+      - path: .arch-lens/diagrams/check-and-render.sequence.puml
+        sha256: 365102909c26230d5f91e3b4cc5342a1a07977b7b49d9720513c8f3acb7b7be8
+      - path: .arch-lens/diagrams/product-goals.use-case.puml
+        sha256: 0f3074fec80fd0fe515b128ca0ad6e4e9e0c14994a77c8f5bddb3f57f0cc769f
+      - path: .arch-lens/diagrams/runtime-responsibilities.component.puml
+        sha256: 768e21b603aab36353be9a6f9e02c6878ecdcf8fab71e5c442feb39af6da982c
+      - path: .arch-lens/principles.md
+        sha256: 480b1121967b746a3356dcda277c95ba0ce4ad8c9e82e1558ffdb1b84a8427d2
+      - path: .arch-lens/rendered/check-and-render.sequence.svg
+        sha256: cbfff12df5239ced2eb320fad8f5e3db8deb396634dad30177fdd3abd8665ebd
+      - path: .arch-lens/rendered/product-goals.use-case.svg
+        sha256: f005411045bc9682987e82717c4e38a1a5f02d3113819b6a520e1db9ef105d9e
+      - path: .arch-lens/rendered/runtime-responsibilities.component.svg
+        sha256: ae650d55efced342a124d14a21138933bc33afdfb3cb208626d57c20ecfb9e48
+completion: []

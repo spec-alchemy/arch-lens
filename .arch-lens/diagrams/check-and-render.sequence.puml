@@ -63,10 +63,5 @@ else 全部图为 PASS
   Skill --> Agent : 逐图视觉结论、diff、理由与语义审查结论
 end
 
-note over Candidate,Output
-  PlantUML 是唯一可编辑业务模型。
-  SVG 是必须存在、不可手工维护的派生审查产物。
-  自定义输出目录不满足标准镜像门禁。
-  CLI 只报告客观布局事实，视觉质量由 Skill 与人类判断。
-end note
+note over Candidate,Output: PlantUML 是唯一源；SVG 为受版本控制的派生视图。
 @enduml
