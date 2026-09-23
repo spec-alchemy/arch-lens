@@ -21,6 +21,7 @@
 - `latest` 在 GA 之前保持占位（当前为 `0.0.0-draft`），预览版一律不更新它。
 - npm dist-tag 必须指向已存在的版本，因此 `beta` 标签在第一次发布 beta 时创建，不预先建立空标签。
 - `package.json` 的 `publishConfig.tag` 默认是 `next`。beta 与 rc 发布必须显式传 `--tag beta`，否则会把预发布版本错发到 `next`。
+- tag 统一使用**附注 tag**（`git tag -a`），保留 tagger 与时间信息；不要混用轻量 tag。
 
 ## 版本号规则
 
@@ -89,7 +90,7 @@ npm publish --access public --tag beta      # beta / rc
 打 tag 并创建 GitHub Release：
 
 ```sh
-git tag vX.Y.Z-alpha.N
+git tag -a vX.Y.Z-alpha.N -m "Arch Lens vX.Y.Z-alpha.N"
 git push origin vX.Y.Z-alpha.N
 gh release create vX.Y.Z-alpha.N --repo spec-alchemy/arch-lens \
   --title "Arch Lens vX.Y.Z-alpha.N" --generate-notes --prerelease
@@ -100,5 +101,7 @@ gh release create vX.Y.Z-alpha.N --repo spec-alchemy/arch-lens \
 ```sh
 npm view @spec-alchemy/arch-lens dist-tags --json
 ```
+
+tag 必须指向该版本的 **release prep commit**（把 `package.json` 版本号改到目标版本的那个提交），不要打在它之后的任意 HEAD 上。CI 只校验 tag 名与 `package.json` 版本一致，**不校验 tag 的落点**，所以打错位置不会被自动拦住。
 
 GA 发布额外要求：`latest` 指向新版本，GitHub Release 不带 `--prerelease`。
