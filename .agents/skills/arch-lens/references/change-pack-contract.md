@@ -26,7 +26,7 @@ Change Pack 为架构敏感变更保存决策上下文和实施证据，但不�
 - `proposal.md`：问题证据、目标、非目标、AC、假设和未决问题。
 - `decisions.md`：取舍的上下文、决定、替代方案和后果。
 - `tasks.md`：实现清单，不承载设计语义。
-- `approval.yaml`：CLI 追加的人工决定和内容摘要，禁止手工编辑。
+- `approval.yaml`：CLI 追加的人工决定和内容摘要，禁止手工编辑。`reviewer` 是稳定的人类标识，同一审查者始终使用同一写法，便于跨 Change Pack 追溯。
 - `verification.md`：AI 的实现语义审查、AC 结果、测试证据和残余风险。
 - 顶层 `diagrams/`：唯一已批准业务模型。
 - Change Pack `diagrams/`：未批准候选，不是长期副本；提升后删除，归档不保留 `.puml`。

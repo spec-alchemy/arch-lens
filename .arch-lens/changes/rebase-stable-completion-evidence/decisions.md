@@ -44,4 +44,4 @@ active pack 期间不存在历史重写：变更在独立 branch/worktree 上推
 
 ## Visual Review
 
-- .arch-lens/diagrams/modeling-review.activity.puml: PASS - Candidate SVG 1619x2477, aspect=0.654; notes=0, note-lines=0, share=0%, max-note=none. Opened current candidate SVG at full page and 2x zoom on the integration/completion region: no clipping or overlap, no new crossings, all four swimlane boundaries respected, top-to-bottom reading order intact. The combined guard label is wide but fully enclosed by the decision diamond.
+- .arch-lens/diagrams/modeling-review.activity.puml: PASS - Candidate SVG 1564x2477, aspect=0.631; notes=0, note-lines=0, share=0%, max-note=none. Opened current candidate SVG at full page and 2x zoom on the integration/completion region: no clipping or overlap, no new crossings, all four swimlane boundaries respected, top-to-bottom reading order intact. Guard label tightened to `内容标识不匹配，或已批准设计被推翻？`; diagram width dropped 1619 -> 1564 and the label sits fully inside the diamond.

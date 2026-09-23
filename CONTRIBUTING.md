@@ -24,6 +24,7 @@ npm pack --dry-run
 - 人类明确批准设计后，才可记录 design approval、应用候选模型并形成独立 model-only commit。
 - 实现完成后，AI 必须对照批准模型、代码 diff、测试和 AC 做语义审查；人类明确验收后才可记录 completion approval 并归档。
 - PlantUML 文件保持自包含，并作为唯一可编辑业务模型；Change Pack 保存上下文和证据。
+- `approval.yaml` 的 `reviewer` 是稳定的人类标识：同一审查者始终使用同一写法。本仓库统一写作 `BeaconSage`，不要混用 `beacon.sage` 等变体。
 
 ## 分支与合并
 
