@@ -1,4 +1,21 @@
 schemaVersion: 1
 workflowProtocol: 1
-design: []
+design:
+  - reviewer: BeaconSage
+    recordedAt: 2026-09-23T04:11:00.894Z
+    digest: 6327ed0a677e4533864488a53a165eb32549255a2e0707f663e4ac9886397d6e
+    baseCommit: 5954bb9bffcae420f2084acb5df664fb2571da49
+    artifacts:
+      - path: .arch-lens/changes/rebase-stable-completion-evidence/change.yaml
+        sha256: b776d906f1320692cb68f0c49077016aee9609e2dea3df2be43137802c05cb3b
+      - path: .arch-lens/changes/rebase-stable-completion-evidence/decisions.md
+        sha256: 3517762be7ad7bc350e3f78f35de4ee129882e90800d0f27865344ee1d4b781e
+      - path: .arch-lens/changes/rebase-stable-completion-evidence/proposal.md
+        sha256: 63cbd0a230a55b1fcf50e317d23fc27a845971586ce7b0a65e07724fcac87a41
+      - path: .arch-lens/diagrams/modeling-review.activity.puml
+        sha256: 31e0ffe0b9aa2ff93f22897e5827bdf35a7f67a2e83eaaab53d31d420b68e10e
+      - path: .arch-lens/principles.md
+        sha256: 480b1121967b746a3356dcda277c95ba0ce4ad8c9e82e1558ffdb1b84a8427d2
+      - path: .arch-lens/rendered/modeling-review.activity.svg
+        sha256: fbd2aac325d8f01e38b5d58472d5f29de28466137b7bd38c76b1ceb03c89c708
 completion: []
