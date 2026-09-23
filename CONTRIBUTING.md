@@ -1,6 +1,6 @@
 # Contributing to Arch Lens
 
-Arch Lens 当前为 `0.1.0-alpha.2` 外部预览版。欢迎通过 issue 和 pull request 参与；预览版会持续明确 CLI、Skill、PlantUML 合同和 Change Pack 协议的兼容范围。
+Arch Lens 当前为 `0.1.0-alpha.3` 外部预览版。欢迎通过 issue 和 pull request 参与；预览版会持续明确 CLI、Skill、PlantUML 合同和 Change Pack 协议的兼容范围。
 
 ## 开发环境
 
@@ -52,14 +52,14 @@ rebase merge 会重写被合并提交的哈希。集成到 `main` 之后，Chang
 
 常规 CI 只执行验证，不持有 npm 发布权限。预览包从合并后的干净 `main` 显式发布，并在发布前运行 `npm run release:check`；GitHub Release 必须绑定同名 `vX.Y.Z` 标签。
 
-本次 `0.1.0-alpha.2` 发布命令为：
+本次 `0.1.0-alpha.3` 发布命令为：
 
 ```sh
 npm run release:check
 npm publish --access public --tag next
-git tag v0.1.0-alpha.2
-git push origin v0.1.0-alpha.2
-gh release create v0.1.0-alpha.2 --repo spec-alchemy/arch-lens --title "Arch Lens v0.1.0-alpha.2" --generate-notes --prerelease
+git tag v0.1.0-alpha.3
+git push origin v0.1.0-alpha.3
+gh release create v0.1.0-alpha.3 --repo spec-alchemy/arch-lens --title "Arch Lens v0.1.0-alpha.3" --generate-notes --prerelease
 ```
 
 提交 PR 即表示贡献按本仓库的 [EPL 2.0](LICENSE) 许可提供。
