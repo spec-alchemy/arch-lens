@@ -9,6 +9,8 @@ import {
 } from "./core.js";
 
 const GIT_BUFFER = 16 * 1024 * 1024;
+const PATCH_ID_BUFFER = 256 * 1024 * 1024;
+const PATCH_ID = /^[0-9a-f]{40,64}$/;
 
 export function git(cwd, args, options = {}) {
   return spawnSync("git", args, {
@@ -137,4 +139,29 @@ export function commitsTouchingPath(root, file) {
   const result = git(root, ["log", "--reverse", "--format=%H", "--", file]);
   if (result.status !== 0) throw new Error(`无法读取文件历史：${file}`);
   return result.stdout.split(/\r?\n/).filter(Boolean);
+}
+
+export function gitPatchId(root, commit) {
+  const shown = git(root, ["show", "--no-ext-diff", "--no-color", "--format=", commit]);
+  if (shown.status !== 0) return null;
+  const result = spawnSync("git", ["patch-id", "--stable"], { cwd: root, input: shown.stdout, encoding: "utf8", maxBuffer: PATCH_ID_BUFFER });
+  if (result.status !== 0) return null;
+  const line = result.stdout.split(/\r?\n/).find(Boolean);
+  const value = line ? line.trim().split(/\s+/)[0] : "";
+  return PATCH_ID.test(value) ? value : null;
+}
+
+export function patchIdIndex(root, range) {
+  const log = git(root, ["log", "-p", "--no-merges", "--no-color", "--format=%H", range], { maxBuffer: PATCH_ID_BUFFER });
+  if (log.status !== 0) return null;
+  const result = spawnSync("git", ["patch-id", "--stable"], { cwd: root, input: log.stdout, encoding: "utf8", maxBuffer: PATCH_ID_BUFFER });
+  if (result.status !== 0) return null;
+  const index = new Map();
+  for (const line of result.stdout.split(/\r?\n/)) {
+    const [patch, commit] = line.trim().split(/\s+/);
+    if (!PATCH_ID.test(patch ?? "") || !PATCH_ID.test(commit ?? "")) continue;
+    if (!index.has(patch)) index.set(patch, []);
+    index.get(patch).push(commit);
+  }
+  return index;
 }

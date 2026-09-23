@@ -15,7 +15,7 @@ const SHA256 = /^[0-9a-f]{64}$/;
 const FULL_COMMIT = /^[0-9a-f]{40,64}$/;
 const APPROVAL_KEYS = new Set(["schemaVersion", "workflowProtocol", "design", "completion"]);
 const DESIGN_KEYS = new Set(["reviewer", "recordedAt", "digest", "baseCommit", "artifacts"]);
-const COMPLETION_KEYS = new Set(["reviewer", "recordedAt", "digest", "designDigest", "implementationCommit", "reviewedImplementationCommit", "tasksSha256", "verificationSha256"]);
+const COMPLETION_KEYS = new Set(["reviewer", "recordedAt", "digest", "designDigest", "implementationCommit", "reviewedImplementationCommit", "implementationPatchId", "tasksSha256", "verificationSha256"]);
 
 export function emptyApproval() {
   return { schemaVersion: SCHEMA_VERSION, workflowProtocol: WORKFLOW_PROTOCOL, design: [], completion: [] };
@@ -64,7 +64,8 @@ export function validateApprovalValue(value, file) {
     rejectUnknownKeys(record, COMPLETION_KEYS, location, diagnostics);
     const hashes = [record.digest, record.designDigest, record.tasksSha256, record.verificationSha256];
     const commits = [record.implementationCommit, record.reviewedImplementationCommit];
-    if (!validIdentity(record.reviewer, record.recordedAt) || hashes.some((hash) => !SHA256.test(hash ?? "")) || commits.some((commit) => !FULL_COMMIT.test(commit ?? ""))) diagnostics.push(diag("APPROVAL_RECORD_INVALID", location, "completion approval 的 reviewer、时间、摘要或 commit 无效。"));
+    const patchIdValid = record.implementationPatchId === undefined || record.implementationPatchId === null || FULL_COMMIT.test(record.implementationPatchId ?? "");
+    if (!validIdentity(record.reviewer, record.recordedAt) || hashes.some((hash) => !SHA256.test(hash ?? "")) || commits.some((commit) => !FULL_COMMIT.test(commit ?? "")) || !patchIdValid) diagnostics.push(diag("APPROVAL_RECORD_INVALID", location, "completion approval 的 reviewer、时间、摘要、commit 或实现内容标识无效。"));
   });
   return diagnostics;
 }

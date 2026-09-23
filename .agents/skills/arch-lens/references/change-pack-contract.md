@@ -62,9 +62,12 @@ ID 使用最长 64 字符的小写 kebab-case。每个变更至少声明一张�
 <!-- arch-lens: semantic-review=pass|concerns|fail|pending -->
 <!-- arch-lens: design-digest=<sha256>|pending -->
 <!-- arch-lens: implementation-commit=<full-commit>|pending -->
+<!-- arch-lens: implementation-patch-id=<sha1>|pending -->
 ```
 
 implementation commit 是被审查的代码提交。它之后只能提交 `tasks.md` 和 `verification.md` 证据；completion approval 再绑定包含证据的当前 HEAD，避免 commit 哈希自引用。
+
+`implementation-commit` 记录提交身份，`implementation-patch-id` 记录被审查实现的内容标识（`git patch-id --stable`）。二者分工：身份是写入时的事实，内容标识承担跨历史重写的核对职责。completion approval 必须同时记录二者；只有缺少该字段的既有归档记录允许省略。
 
 `implementation-commit` 记录的是写入时的 Git 事实。rebase merge 会重写提交哈希，集成后该引用可能不再从目标分支可达；归档包不参与 CLI 门禁校验，这些引用只作为审计线索保留，不保证长期可反查。
 
@@ -90,7 +93,8 @@ arch-lens change refresh-base <id> [--json]
 arch-lens change apply-model <id> [--json]
 arch-lens change record-approval <id> --stage design|completion --reviewer <name>
 arch-lens change evidence <id> [--json]
+arch-lens change archive-evidence <id> [--ref <ref>] [--json]
 arch-lens change archive <id> [--json]
 ```
 
-`status` 和 `validate` 不做语义结论，只报告基线、源图 note 统计、SVG 哈希、viewBox、宽高、宽高比和稳定风险诊断；`diff` 只返回 base/candidate 文本差异；`render` 使用锁定受管运行时生成标准候选 SVG；`refresh-base` 只更新已同步 HEAD 的基线事实；`apply-model` 只在现有人工批准有效时执行确定性文件提升；`evidence` 只读取 Git、任务和 AC 事实；`record-approval` 只记录当前会话中人类已经作出的决定。
+`archive-evidence` 只对已归档包报告完成证据的提交身份可达性和实现内容标识匹配事实，不做语义结论、不自动改写记录。`status` 和 `validate` 不做语义结论，只报告基线、源图 note 统计、SVG 哈希、viewBox、宽高、宽高比和稳定风险诊断；`diff` 只返回 base/candidate 文本差异；`render` 使用锁定受管运行时生成标准候选 SVG；`refresh-base` 只更新已同步 HEAD 的基线事实；`apply-model` 只在现有人工批准有效时执行确定性文件提升；`evidence` 只读取 Git、任务和 AC 事实；`record-approval` 只记录当前会话中人类已经作出的决定。

@@ -33,9 +33,11 @@ import {
   changedPaths,
   commitsBetween,
   git,
+  gitPatchId,
   gitRef,
   gitShow,
   isAncestor,
+  patchIdIndex,
   requireCleanWorktree,
   requireProtocolWorkspace
 } from "./repository.js";
@@ -220,6 +222,53 @@ export function changeEvidence(cwd, id) {
   };
 }
 
+export function changeArchiveEvidence(cwd, id, ref = "HEAD") {
+  const workspace = requireProtocolWorkspace(cwd);
+  validateChangeId(id);
+  const entry = findArchivedChange(workspace.archiveRoot, id);
+  if (!entry) throw new Error(`找不到已归档 Change Pack：${id}`);
+  const root = path.join(workspace.archiveRoot, entry);
+  assertNoSymlinkPath(workspace.archiveRoot, root, `Change Pack archive ${id}`);
+  const paths = { change: path.join(root, "change.yaml"), approval: path.join(root, "approval.yaml"), verification: path.join(root, "verification.md") };
+  for (const [key, file] of Object.entries(paths)) if (!isProtocolFile(file)) throw new Error(`归档 Change Pack ${id} 缺少固定文件：${path.basename(file)}`);
+  const change = parseYaml(paths.change, [], "CHANGE_YAML_INVALID");
+  const approval = readApproval(paths.approval);
+  const completion = approval.completion.at(-1) ?? null;
+  if (!completion) throw new Error(`归档 Change Pack ${id} 没有完成批准记录。`);
+  const verification = parseVerification(readText(paths.verification));
+  const resolvedRef = gitRef(workspace.root, ref);
+  if (!resolvedRef) throw new Error(`无法解析 Git 引用：${ref}`);
+  const baseCommit = change?.baseCommit ?? null;
+  const bounded = baseCommit && isAncestor(workspace.root, baseCommit, resolvedRef);
+  const searchRange = bounded ? `${baseCommit}..${resolvedRef}` : resolvedRef;
+  const index = patchIdIndex(workspace.root, searchRange) ?? new Map();
+  const recorded = completion.implementationPatchId ?? null;
+  const matches = recorded ? index.get(recorded) ?? [] : [];
+  return {
+    id,
+    archivedPath: relativePosix(workspace.root, root),
+    ref,
+    resolvedRef,
+    completion: {
+      reviewer: completion.reviewer,
+      recordedAt: completion.recordedAt,
+      implementationCommit: completion.implementationCommit,
+      implementationCommitReachable: isAncestor(workspace.root, completion.implementationCommit, resolvedRef),
+      reviewedImplementationCommit: completion.reviewedImplementationCommit,
+      reviewedImplementationCommitReachable: isAncestor(workspace.root, completion.reviewedImplementationCommit, resolvedRef),
+      implementationPatchId: recorded
+    },
+    verification: { implementationPatchId: verification.implementationPatchId ?? null },
+    contentIdentity: {
+      recorded,
+      searchRange,
+      searchedCommits: [...index.values()].reduce((total, list) => total + list.length, 0),
+      matchedCommit: matches[0] ?? null,
+      matched: matches.length > 0
+    }
+  };
+}
+
 export function archiveChange(cwd, id) {
   const workspace = requireProtocolWorkspace(cwd);
   requireSingleActiveChange(workspace, id);
@@ -269,6 +318,9 @@ function recordCompletionApproval(workspace, pack, reviewer) {
   if (!reviewedImplementationCommit || reviewedImplementationCommit !== verification.implementationCommit || !isAncestor(workspace.root, reviewedImplementationCommit, workspace.head)) {
     throw new Error("verification.md 必须绑定当前 HEAD 的一个有效实现祖先 commit。");
   }
+  const reviewedPatchId = gitPatchId(workspace.root, reviewedImplementationCommit);
+  if (!reviewedPatchId) throw new Error("无法计算被审查实现提交的实现内容标识。");
+  if (verification.implementationPatchId !== reviewedPatchId) throw new Error("verification.md 的 implementation-patch-id 与被审查实现提交不一致。");
   const evidenceOnly = new Set([pack.relative.tasks, pack.relative.verification]);
   const postImplementationChanges = changedFilesBetween(workspace.root, reviewedImplementationCommit, workspace.head).map((item) => item.path).filter((file) => !evidenceOnly.has(file));
   if (postImplementationChanges.length > 0) throw new Error(`实现 commit 之后只允许提交 tasks.md 和 verification.md 证据；发现：${postImplementationChanges.join("、")}`);
@@ -277,7 +329,7 @@ function recordCompletionApproval(workspace, pack, reviewer) {
   const digest = completionDigest({ designDigest: status.designApproval.digest, implementationCommit: workspace.head, tasksSha256, verificationSha256 });
   const approval = readApproval(pack.paths.approval);
   if (approval.completion.at(-1)?.digest === digest) throw new Error("当前完成摘要已经记录过批准，无需重复记录。");
-  const record = { reviewer, recordedAt: new Date().toISOString(), digest, designDigest: status.designApproval.digest, implementationCommit: workspace.head, reviewedImplementationCommit, tasksSha256, verificationSha256 };
+  const record = { reviewer, recordedAt: new Date().toISOString(), digest, designDigest: status.designApproval.digest, implementationCommit: workspace.head, reviewedImplementationCommit, implementationPatchId: reviewedPatchId, tasksSha256, verificationSha256 };
   approval.completion.push(record);
   atomicWrite(pack.paths.approval, stringifyYaml(approval, { lineWidth: 0 }));
   return { id: pack.id, stage: "completion", reviewer, digest, implementationCommit: workspace.head, recordedAt: record.recordedAt };
@@ -464,6 +516,7 @@ function validateMarkdown(pack, diagnostics, gate) {
     for (const criterion of criteria) if (byId.get(criterion) !== "PASS") diagnostics.push(diag("AC_NOT_PASS", pack.relative.verification, `${criterion} 必须具有 PASS 验证结果。`));
     if (verification.semanticReview !== "pass") diagnostics.push(diag("SEMANTIC_REVIEW_NOT_PASS", pack.relative.verification, "AI semantic review 必须显式声明为 pass。"));
     if (pack.text.verification.includes("[TODO")) diagnostics.push(diag("PLACEHOLDER_REMAINING", pack.relative.verification, "完成批准前必须清除 verification.md 中的 [TODO]。"));
+    if (!verification.implementationPatchId || verification.implementationPatchId === "pending") diagnostics.push(diag("IMPLEMENTATION_PATCH_ID_REQUIRED", pack.relative.verification, "完成批准前 verification.md 必须声明被审查实现提交的 implementation-patch-id。"));
   }
 }
 
@@ -713,6 +766,7 @@ function parseVerification(source) {
     semanticReview: source.match(/<!--\s*arch-lens:\s*semantic-review=(pass|concerns|fail|pending)\s*-->/i)?.[1].toLowerCase() ?? "missing",
     designDigest: source.match(/<!--\s*arch-lens:\s*design-digest=([0-9a-f]{64}|pending)\s*-->/i)?.[1] ?? null,
     implementationCommit: source.match(/<!--\s*arch-lens:\s*implementation-commit=([0-9a-f]{40,64}|pending)\s*-->/i)?.[1] ?? null,
+    implementationPatchId: source.match(/<!--\s*arch-lens:\s*implementation-patch-id=([0-9a-f]{40,64}|pending)\s*-->/i)?.[1] ?? null,
     acceptanceResults
   };
 }

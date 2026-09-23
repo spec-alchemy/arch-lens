@@ -15,7 +15,7 @@ description: 使用 PlantUML 帮助人类与 AI 理解和设计软件中的业�
 arch-lens capabilities --json
 ```
 
-只在 `workflowProtocol` 为 `1` 且包含 `plantuml-batch-render`、`change-pack-v1`、`approval-digest-v1`、`completion-approval-v1`、`managed-plantuml-runtime-v1`、`change-overlay-v1`、`single-active-change-v1`、`model-baseline-freshness-v1`、`tracked-svg-mirror-v1`、`svg-facts-v1`、`note-budget-v1` 和 `visual-review-gate-v1` 时继续。不兼容时停止写入并说明应更新 CLI 或项目 Skill。
+只在 `workflowProtocol` 为 `1` 且包含 `plantuml-batch-render`、`change-pack-v1`、`approval-digest-v1`、`completion-approval-v1`、`managed-plantuml-runtime-v1`、`change-overlay-v1`、`single-active-change-v1`、`model-baseline-freshness-v1`、`tracked-svg-mirror-v1`、`svg-facts-v1`、`note-budget-v1`、`visual-review-gate-v1` 和 `rebase-stable-evidence-v1` 时继续。不兼容时停止写入并说明应更新 CLI 或项目 Skill。
 
 1. 确认仓库已有有效 HEAD；缺少 protocol 1 工作区时，只在允许初始化的干净状态运行 `arch-lens init`。
 2. 确认每个 Git worktree 最多一个活动 Change Pack；并行工作必须拆到独立 branch/worktree，进入目标分支时逐个集成。
@@ -50,6 +50,7 @@ arch-lens capabilities --json
 - 设计摘要 stale 时返回模型审查；实现推翻设计时更新 `.puml` 并重新批准。
 - 顶层图集只保存批准模型；新增和修改候选写入 Change Pack overlay，删除只写入 change.yaml。
 - add/modify `.puml` 必须通过标准 render 产生同步 SVG；delete 必须同时删除 `.puml`/SVG。设计摘要和 model-only commit 同时绑定二者。
+- 完成证据在提交身份之外绑定实现内容标识（`git patch-id --stable`）；集成重写历史后按内容标识核对，不按提交身份核对。
 - `baseCommit` 后若已批准模型基线变化，必须先同步 Git、显式运行 `change refresh-base` 并重新审查；不得自动刷新绕过 stale 状态。
 - 每张当前 SVG 的视觉审查必须记录为 PASS、CONCERNS 或 FAIL；任一 add/modify 图不是 PASS 时不得请求或记录设计批准。
 - 未获人类超额授权时不得生成第四张候选图，也不得先生成后用沉没成本证明其必要性。

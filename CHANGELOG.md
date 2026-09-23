@@ -4,7 +4,10 @@
 
 ## Unreleased
 
-后续变化将在下一个版本发布前记录。
+- 新增 `rebase-stable-evidence-v1`：完成批准在提交身份之外绑定实现内容标识（`git patch-id --stable`），使归档证据在 rebase merge 重写历史后仍可核对。
+- `verification.md` 新增 `implementation-patch-id` 声明，completion approval 记录新增 `implementationPatchId` 字段；缺少该字段的既有归档记录仍可解析。
+- 新增只读命令 `change archive-evidence <id> [--ref <ref>]`，报告归档完成证据的提交身份可达性与实现内容标识匹配事实。
+- Skill 合同要求 CLI 提供 `rebase-stable-evidence-v1`；旧版 CLI 需升级后再使用新版 Skill。
 
 ## 0.1.0-alpha.2 - 2026-09-23
 

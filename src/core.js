@@ -17,7 +17,8 @@ export const FEATURES = Object.freeze([
   "tracked-svg-mirror-v1",
   "svg-facts-v1",
   "note-budget-v1",
-  "visual-review-gate-v1"
+  "visual-review-gate-v1",
+  "rebase-stable-evidence-v1"
 ]);
 export const DIAGRAMS_RELATIVE_PATH = ".arch-lens/diagrams";
 export const PRINCIPLES_RELATIVE_PATH = ".arch-lens/principles.md";
