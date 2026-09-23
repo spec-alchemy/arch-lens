@@ -43,7 +43,7 @@ test("npm 预览发布保持 scoped 包、next 标签和稳定 CLI 名称", () =
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
 
   assert.equal(packageJson.name, "@spec-alchemy/arch-lens");
-  assert.equal(packageJson.version, "0.1.0-alpha.1");
+  assert.equal(packageJson.version, "0.1.0-alpha.2");
   assert.equal(packageJson.private, false);
   assert.deepEqual(packageJson.publishConfig, {
     access: "public",

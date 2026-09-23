@@ -23,7 +23,7 @@ test("CLI exposes the preview Skill-first surface and keeps removed or semantic 
   const renderOutsideRepository = run(tempDir(), "diagrams", "render", "--json");
 
   assert.equal(version.status, 0, version.stderr);
-  assert.equal(version.stdout.trim(), "0.1.0-alpha.1");
+  assert.equal(version.stdout.trim(), "0.1.0-alpha.2");
   assert.match(help.stdout, /Skill-first 的 PlantUML/);
   assert.match(help.stdout, /capabilities/);
   assert.match(help.stdout, /diagrams/);
@@ -38,7 +38,7 @@ test("CLI exposes the preview Skill-first surface and keeps removed or semantic 
   assert.doesNotMatch(changeHelp.stdout, /\breview\b|\bapprove\b|\bverify\b/);
   assert.deepEqual(JSON.parse(capabilities.stdout), {
     schemaVersion: 1,
-    cliVersion: "0.1.0-alpha.1",
+    cliVersion: "0.1.0-alpha.2",
     workflowProtocol: 1,
     features: ["plantuml-batch-render", "change-pack-v1", "approval-digest-v1", "completion-approval-v1", "managed-plantuml-runtime-v1", "change-overlay-v1", "single-active-change-v1", "model-baseline-freshness-v1", "tracked-svg-mirror-v1", "svg-facts-v1", "note-budget-v1", "visual-review-gate-v1"]
   });
