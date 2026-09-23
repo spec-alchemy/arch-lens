@@ -2,7 +2,7 @@
 
 Arch Lens 是面向人类与 AI 协作的 Skill-first PlantUML 业务建模与变更审查工作区。它帮助团队理解参与者目标、系统用例、领域实体与规则、业务流程、职责协作、生命周期、组件边界和接口，并让设计决策与实现证据保持可追溯。
 
-当前版本为 `0.1.0-alpha.1`，这是首个外部预览版本。预览阶段的 CLI、Skill、PlantUML 合同和 Change Pack 协议仍可能演进。
+当前版本为 `0.1.0-alpha.2`。预览阶段的 CLI、Skill、PlantUML 合同和 Change Pack 协议仍可能演进。
 
 ## 安装
 
@@ -52,9 +52,9 @@ npm publish --access public --tag next
 GitHub 预发布版本使用同名 tag：
 
 ```sh
-git tag v0.1.0-alpha.1
-git push origin v0.1.0-alpha.1
-gh release create v0.1.0-alpha.1 --repo spec-alchemy/arch-lens --title "Arch Lens v0.1.0-alpha.1" --generate-notes --prerelease
+git tag v0.1.0-alpha.2
+git push origin v0.1.0-alpha.2
+gh release create v0.1.0-alpha.2 --repo spec-alchemy/arch-lens --title "Arch Lens v0.1.0-alpha.2" --generate-notes --prerelease
 ```
 
 ## 协作工作流
