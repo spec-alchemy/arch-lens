@@ -40,7 +40,7 @@ test("CLI exposes the preview Skill-first surface and keeps removed or semantic 
     schemaVersion: 1,
     cliVersion: "0.1.0-alpha.2",
     workflowProtocol: 1,
-    features: ["plantuml-batch-render", "change-pack-v1", "approval-digest-v1", "completion-approval-v1", "managed-plantuml-runtime-v1", "change-overlay-v1", "single-active-change-v1", "model-baseline-freshness-v1", "tracked-svg-mirror-v1", "svg-facts-v1", "note-budget-v1", "visual-review-gate-v1"]
+    features: ["plantuml-batch-render", "change-pack-v1", "approval-digest-v1", "completion-approval-v1", "managed-plantuml-runtime-v1", "change-overlay-v1", "single-active-change-v1", "model-baseline-freshness-v1", "tracked-svg-mirror-v1", "svg-facts-v1", "note-budget-v1", "visual-review-gate-v1", "rebase-stable-evidence-v1"]
   });
   assert.equal(removed.status, 1);
   assert.match(removed.stderr, /未知命令/);

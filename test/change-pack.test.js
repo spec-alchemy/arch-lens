@@ -374,7 +374,8 @@ test("design digest, model-only commit, evidence, completion approval and archiv
   const implementationCommit = git(cwd, "rev-parse", "HEAD");
   assertJsonDiagnostic(run(cwd, "change", "record-approval", "notification-policy", "--stage", "completion", "--reviewer", "Bob", "--json", { ARCH_LENS_PLANTUML: fake }), "TASKS_INCOMPLETE");
   fs.writeFileSync(tasks, originalTasks.replace("[ ]", "[x]"));
-  fs.writeFileSync(path.join(pack, "verification.md"), verificationText(designDigest, implementationCommit));
+  const implementationPatchId = patchIdOf(cwd, implementationCommit);
+  fs.writeFileSync(path.join(pack, "verification.md"), verificationText(designDigest, implementationCommit, implementationPatchId));
   assertJsonError(run(cwd, "change", "record-approval", "notification-policy", "--stage", "completion", "--reviewer", "Bob", "--json", { ARCH_LENS_PLANTUML: fake }), /必须已提交且工作区干净/);
   commitAll(cwd, "verify notification policy");
 
@@ -396,6 +397,51 @@ test("design digest, model-only commit, evidence, completion approval and archiv
   assert.equal(fs.existsSync(archivedPath), true);
   assert.equal(fs.existsSync(pack), false);
   assert.match(git(cwd, "status", "--porcelain", "--untracked-files=all"), /\.arch-lens\/changes\/archive/);
+
+  const before = JSON.parse(run(cwd, "change", "archive-evidence", "notification-policy", "--json").stdout);
+  assert.equal(before.completion.implementationPatchId, implementationPatchId);
+  assert.equal(before.completion.reviewedImplementationCommitReachable, true);
+  assert.equal(before.contentIdentity.matched, true);
+  assert.equal(before.contentIdentity.matchedCommit, implementationCommit);
+
+  commitAll(cwd, "archive notification policy");
+  const branch = git(cwd, "rev-parse", "--abbrev-ref", "HEAD");
+  git(cwd, "checkout", "-q", "-b", "advance", afterModel.designApproval.modelCommit);
+  fs.writeFileSync(path.join(cwd, "advance.txt"), "advance\n");
+  commitAll(cwd, "advance target branch");
+  git(cwd, "checkout", "-q", branch);
+  git(cwd, "rebase", "-q", "advance");
+
+  const after = JSON.parse(run(cwd, "change", "archive-evidence", "notification-policy", "--json").stdout);
+  assert.equal(after.completion.reviewedImplementationCommitReachable, false, "rebase rewrites the recorded commit identity");
+  assert.equal(after.contentIdentity.matched, true, "content identity still matches the integrated implementation");
+  assert.notEqual(after.contentIdentity.matchedCommit, implementationCommit);
+  assert.equal(patchIdOf(cwd, after.contentIdentity.matchedCommit), implementationPatchId);
+
+  assertJsonError(run(cwd, "change", "archive-evidence", "missing-pack", "--json"), /找不到已归档 Change Pack/);
+  assertJsonError(run(cwd, "change", "archive-evidence", "notification-policy", "--ref", "no-such-ref", "--json"), /无法解析 Git 引用/);
+});
+
+test("implementation content identity survives rebase and is sensitive to content changes", () => {
+  const cwd = gitRepo();
+  git(cwd, "checkout", "-q", "-b", "work");
+  fs.writeFileSync(path.join(cwd, "policy.txt"), "one\n");
+  commitAll(cwd, "implement policy");
+  const original = git(cwd, "rev-parse", "HEAD");
+  const originalIdentity = patchIdOf(cwd, original);
+
+  git(cwd, "checkout", "-q", "-b", "advance", `${original}~1`);
+  fs.writeFileSync(path.join(cwd, "target.txt"), "target\n");
+  commitAll(cwd, "advance target branch");
+  git(cwd, "checkout", "-q", "work");
+  git(cwd, "rebase", "-q", "advance");
+  const rebased = git(cwd, "rev-parse", "HEAD");
+  assert.notEqual(rebased, original);
+  assert.equal(patchIdOf(cwd, rebased), originalIdentity);
+
+  fs.writeFileSync(path.join(cwd, "policy.txt"), "two\n");
+  commitAll(cwd, "change implementation content");
+  assert.notEqual(patchIdOf(cwd, "HEAD"), originalIdentity);
 });
 
 test("legacy multiple-active worktrees block status, validate, approval and apply", () => {
@@ -574,12 +620,13 @@ Pending implementation review.
 `;
 }
 
-function verificationText(designDigest, implementationCommit) {
+function verificationText(designDigest, implementationCommit, implementationPatchId) {
   return `# Implementation Verification
 
 <!-- arch-lens: semantic-review=pass -->
 <!-- arch-lens: design-digest=${designDigest} -->
 <!-- arch-lens: implementation-commit=${implementationCommit} -->
+<!-- arch-lens: implementation-patch-id=${implementationPatchId} -->
 
 ## Evidence
 
@@ -638,6 +685,14 @@ function writeCandidate(cwd, id, relative, className) {
   const rendered = path.join(cwd, ".arch-lens/changes", id, "rendered", relative.replace(/\.puml$/i, ".svg"));
   fs.mkdirSync(path.dirname(rendered), { recursive: true });
   fs.writeFileSync(rendered, fakeSvg(content));
+}
+
+function patchIdOf(cwd, commit) {
+  const shown = spawnSync("git", ["show", "--no-ext-diff", "--no-color", "--format=", commit], { cwd, encoding: "utf8" });
+  assert.equal(shown.status, 0, shown.stderr);
+  const result = spawnSync("git", ["patch-id", "--stable"], { cwd, encoding: "utf8", input: shown.stdout });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim().split(/\s+/)[0];
 }
 
 function statusFor(cwd, id) {

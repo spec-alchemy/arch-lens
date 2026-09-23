@@ -8,7 +8,7 @@ import {
   localizeCommanderError,
   printJson
 } from "./core.js";
-import { applyModel, archiveChange, changeEvidence, changeStatus, createChange, diffChange, recordApproval, refreshChangeBase, renderChange, validateChangeCommand } from "./change-pack.js";
+import { applyModel, archiveChange, changeArchiveEvidence, changeEvidence, changeStatus, createChange, diffChange, recordApproval, refreshChangeBase, renderChange, validateChangeCommand } from "./change-pack.js";
 import { checkDiagrams, listDiagrams, renderDiagrams } from "./plantuml.js";
 import { initWorkspace, installAgent } from "./workspace.js";
 
@@ -147,6 +147,15 @@ export async function runCli(argv = process.argv) {
     .description("读取 model-only commit 之后的 Git、任务和 AC 事实。")
     .action((id, options) => runOrExit(options.json, () => {
       const result = changeEvidence(process.cwd(), id);
+      if (options.json) printJson({ schemaVersion: SCHEMA_VERSION, ...result });
+      else console.log(JSON.stringify(result, null, 2));
+    }));
+  change.command("archive-evidence").argument("<id>", "Change ID")
+    .option("--ref <ref>", "用于核对实现内容标识的 Git 引用", "HEAD")
+    .option("--json", "输出机器可读 JSON")
+    .description("只读报告已归档 Change Pack 的完成证据与实现内容标识核对事实。")
+    .action((id, options) => runOrExit(options.json, () => {
+      const result = changeArchiveEvidence(process.cwd(), id, options.ref);
       if (options.json) printJson({ schemaVersion: SCHEMA_VERSION, ...result });
       else console.log(JSON.stringify(result, null, 2));
     }));
