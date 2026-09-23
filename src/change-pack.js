@@ -39,7 +39,7 @@ import {
   requireCleanWorktree,
   requireProtocolWorkspace
 } from "./repository.js";
-import { discoverDiagrams, renderDiagramRecords, svgFacts, validateDiagramRecords, validateSvgMirror } from "./plantuml.js";
+import { discoverDiagrams, inspectDiagramRecords, renderDiagramRecords, svgFacts, validateDiagramRecordsWithFacts, validateSvgMirror } from "./plantuml.js";
 
 const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const templateRoot = path.join(moduleRoot, "templates", "change-pack");
@@ -133,10 +133,11 @@ export function renderChange(cwd, id) {
   const output = pack.renderedRoot;
   if (records.length === 0) {
     fs.rmSync(output, { recursive: true, force: true });
-    return { id, output: relativePosix(workspace.root, output), rendered: [], svg: [], diagnostics: [] };
+    return { id, output: relativePosix(workspace.root, output), rendered: [], source: [], svg: [], diagnostics: [] };
   }
-  const diagnostics = validateDiagramRecords(workspace.root, records, { syntax: false });
-  const svgs = renderDiagramRecords(workspace.root, records, diagnostics, { managedOnly: true });
+  const inspection = inspectDiagramRecords(records);
+  const diagnostics = inspection.diagnostics;
+  const svgs = renderDiagramRecords(workspace.root, records, diagnostics, { managedOnly: true, inspectPolicy: false });
   const facts = records.map((record, index) => svgFacts(svgs[index], path.join(output, record.relative.replace(/\.puml$/i, ".svg")), workspace.root));
   diagnostics.push(...facts.flatMap((item) => item.diagnostics));
   if (diagnostics.some(isError)) throw operationError("PlantUML 生成的标准 SVG 无效。", diagnostics.sort(compareDiagnostics));
@@ -148,6 +149,7 @@ export function renderChange(cwd, id) {
     id,
     output: relativePosix(workspace.root, output),
     rendered: records.map((record) => ({ source: itemCandidateRelative(pack, record.relative), output: relativePosix(workspace.root, path.join(output, record.relative.replace(/\.puml$/i, ".svg"))) })),
+    source: inspection.facts,
     svg: facts,
     diagnostics
   };
@@ -304,7 +306,9 @@ function validatePack(workspace, pack, options = {}) {
       if (fs.existsSync(source) && !fs.lstatSync(source).isSymbolicLink() && fs.statSync(source).isFile()) records.push({ path: item.path, content: fs.readFileSync(source) });
     }
   }
-  if (!diagnostics.some(isError)) diagnostics.push(...validateDiagramRecords(workspace.root, records, { syntax: options.plantUml === true }));
+  const diagramValidation = validateDiagramRecordsWithFacts(workspace.root, records, { syntax: options.plantUml === true && !diagnostics.some(isError) });
+  const source = diagramValidation.facts;
+  if (!diagnostics.some(isError)) diagnostics.push(...diagramValidation.diagnostics);
   let svg = { checked: options.svg !== false, valid: null, files: [] };
   if (options.svg !== false && !diagnostics.some(isError)) {
     const canonicalRecords = discoverDiagrams(workspace.diagramsRoot).map((file) => ({
@@ -315,7 +319,8 @@ function validatePack(workspace, pack, options = {}) {
     }));
     const canonicalMirror = validateSvgMirror(workspace.root, canonicalRecords, {
       renderedRoot: path.join(workspace.root, RENDERED_RELATIVE_PATH),
-      fullMirror: true
+      fullMirror: true,
+      inspectPolicy: false
     });
     diagnostics.push(...canonicalMirror.diagnostics);
     const candidateRecords = records.filter((record) => {
@@ -325,7 +330,7 @@ function validatePack(workspace, pack, options = {}) {
       ...record,
       svgFile: candidateSvgPath(pack, pack.change.diagrams.find((entry) => entry.path === record.path))
     }));
-    const candidateMirror = validateSvgMirror(workspace.root, candidateRecords, { renderedRoot: pack.renderedRoot, fullMirror: true });
+    const candidateMirror = validateSvgMirror(workspace.root, candidateRecords, { renderedRoot: pack.renderedRoot, fullMirror: true, inspectPolicy: false });
     diagnostics.push(...candidateMirror.diagnostics);
     svg = {
       checked: true,
@@ -337,6 +342,7 @@ function validatePack(workspace, pack, options = {}) {
     artifacts: { present: PACK_FILES.filter((file) => fs.existsSync(path.join(pack.root, file))).length, required: PACK_FILES.length },
     plantUml: { checked: options.plantUml === true, valid: options.plantUml === true ? !diagnostics.some(isError) : null },
     baseline,
+    source,
     svg,
     openQuestions: parseOpenQuestions(pack.text.proposal),
     tasks: taskSummary(parseTasks(pack.text.tasks)),
@@ -491,6 +497,7 @@ function statusForPack(workspace, pack) {
     structurallyValid: !validation.diagnostics.some(isError),
     plantUml: validation.plantUml,
     baseline: validation.baseline,
+    source: validation.source,
     svg: validation.svg,
     diagnostics: validation.diagnostics,
     openQuestions: validation.openQuestions,
@@ -505,7 +512,7 @@ function statusForPack(workspace, pack) {
 
 function summarizePack(workspace, pack) {
   const status = statusForPack(workspace, pack);
-  return { id: status.id, designApproval: status.designApproval.state, completionApproval: status.completionApproval.state, tasks: status.tasks, archiveEligible: status.archiveEligible };
+  return { id: status.id, designApproval: status.designApproval.state, completionApproval: status.completionApproval.state, tasks: status.tasks, source: status.source, archiveEligible: status.archiveEligible };
 }
 
 function readPack(workspace, id) {

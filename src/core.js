@@ -16,6 +16,7 @@ export const FEATURES = Object.freeze([
   "model-baseline-freshness-v1",
   "tracked-svg-mirror-v1",
   "svg-facts-v1",
+  "note-budget-v1",
   "visual-review-gate-v1"
 ]);
 export const DIAGRAMS_RELATIVE_PATH = ".arch-lens/diagrams";
@@ -153,7 +154,13 @@ export function printJson(value) {
 
 export function emit(json, payload, message) {
   if (json) printJson(payload);
-  else console.log(message);
+  else {
+    console.log(message);
+    for (const item of payload?.diagnostics ?? []) {
+      if (item.severity !== "warning") continue;
+      console.log(`${item.file ?? "change"}${item.line ? `:${item.line}` : ""} [${item.code}] ${item.message}`);
+    }
+  }
 }
 
 export function localizeCommanderError(message) {

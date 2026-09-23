@@ -28,6 +28,7 @@ npx @spec-alchemy/arch-lens@next capabilities --json
 - 通过 Change Pack 记录问题、决策、任务、人工批准和实现证据。
 - 每个 worktree 只推进一个活动 Change Pack；并行变更使用独立 branch/worktree。
 - 通过受版本控制的标准 SVG 和逐图视觉结论审查实际渲染结果。
+- 对 PlantUML note 报告条数、行数、行数占比和单条规模 warning，避免图面成为第二份需求或代码文档。
 
 ## 快速开始
 
@@ -107,7 +108,7 @@ node bin/arch-lens.js diagrams render
 node bin/arch-lens.js diagrams check
 ```
 
-标准 SVG 由锁定运行时原子生成并进入 Git；检查会在内存中重渲染并核对 PlantUML 源指纹，同时报告 SHA-256、viewBox、宽高和宽高比。源指纹避免不同 Graphviz 平台的布局字节差异造成误报；缺少指纹的旧 SVG 仍按完整字节校验。AI 或人类仍必须逐张打开 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；CLI 不会宣称图面美观或语义正确。
+标准 SVG 由锁定运行时原子生成并进入 Git；检查会在内存中重渲染并核对 PlantUML 源指纹，同时报告 SHA-256、viewBox、宽高、宽高比和 note 统计。note 超预算、单条过长或行数占比过高只产生 warning，不会阻塞结构校验。源指纹避免不同 Graphviz 平台的布局字节差异造成误报；缺少指纹的旧 SVG 仍按完整字节校验。AI 或人类仍必须逐张打开 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；CLI 不会宣称图面美观或语义正确。
 
 ## 开发
 

@@ -36,6 +36,12 @@ title 提交排程 - 正常场景
 - 不使用布局坐标、生成时间、随机 ID 或工具私有元数据。
 - 只使用 PlantUML 官方语法；避免依赖特定 IDE 插件的扩展。
 
+## Note 预算事实
+
+- source facts 按图报告 `noteCount`、`noteLineCount`、`noteLineShare`、`maxNoteContentLines` 和 `maxNoteCharacters`；`noteLineCount` 包含 block note 的起始行与 `end note` 行，inline note 按 1 行计算，注释行不计入。
+- 类型预算：`domain`、`sequence`、`use-case`、`activity`、`component` 最多 3 条；`state` 最多 2 条。单条 note 最多 3 行内容或 120 个字符；`noteLineShare > 10%` 产生风险 warning。
+- `NOTE_BUDGET_EXCEEDED`、`NOTE_TOO_LONG`、`NOTE_LINE_SHARE_HIGH` 都是 warning，不阻塞 `diagrams check` 或 `change validate`。它们只报告确定性事实，语义取舍仍由 Skill 和人类完成。
+
 ## 离线安全规则
 
 Arch Lens 永不把私有模型上传到远程渲染服务。CLI：

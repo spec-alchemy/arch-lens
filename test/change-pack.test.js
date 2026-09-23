@@ -14,6 +14,7 @@ test("packaged Skill routes semantic work through protocol 1 without AI self-app
   const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
   assert.match(skill, /arch-lens capabilities --json/);
   assert.match(skill, /workflowProtocol.*1/);
+  assert.match(skill, /note-budget-v1/);
   assert.match(skill, /没有当前会话中的明确授权，禁止调用 `change record-approval`/);
   assert.match(skill, /唯一业务模型/);
   assert.match(skill, /默认只生成或修改一张主视图，通常最多三张/);
@@ -35,6 +36,8 @@ test("packaged Skill routes semantic work through protocol 1 without AI self-app
   const modelingGuide = fs.readFileSync(path.join(skillRoot, "references/modeling-guide.md"), "utf8");
   assert.match(modelingGuide, /视图预算与复用/);
   assert.match(modelingGuide, /图种.*选择菜单|不能因为指南列出了六种图就各画一张/s);
+  assert.match(modelingGuide, /NOTE_BUDGET_EXCEEDED/);
+  assert.match(modelingGuide, /noteCount.*noteLineCount.*noteLineShare/s);
   const propose = fs.readFileSync(path.join(skillRoot, "workflows/propose-change.md"), "utf8");
   assert.match(propose, /写任何 `.puml` 前.*视图清单/);
   assert.match(propose, /第四张及以后.*人类明确同意/s);
@@ -42,6 +45,7 @@ test("packaged Skill routes semantic work through protocol 1 without AI self-app
   assert.match(review, /对照生成前视图清单检查预算/);
   assert.match(review, /缺少生成前人类明确同意.*收敛候选/s);
   assert.match(review, /标题.*没有把图自身标记为 Candidate、Draft、Approved/s);
+  assert.match(review, /NOTE_BUDGET_EXCEEDED.*NOTE_TOO_LONG.*NOTE_LINE_SHARE_HIGH/s);
   const plantUmlContract = fs.readFileSync(path.join(skillRoot, "references/plantuml-contract.md"), "utf8");
   assert.match(plantUmlContract, /title.*不得用 `Candidate`、`Draft`、`Approved`.*图自身的工作流阶段/s);
   assert.match(plantUmlContract, /候选与正式状态只由目录位置和批准记录表达/);
@@ -70,7 +74,9 @@ test("change new creates a fixed protocol 1 pack and rejects duplicate IDs", () 
   assertJsonError(run(cwd, "change", "new", "retry-policy", "--json"), /已有活动 Change Pack/);
   const status = run(cwd, "change", "status", "--json");
   assert.equal(status.status, 0, status.stderr);
-  assert.deepEqual(JSON.parse(status.stdout).changes.map((item) => item.id), ["retry-policy"]);
+  const statusPayload = JSON.parse(status.stdout);
+  assert.deepEqual(statusPayload.changes.map((item) => item.id), ["retry-policy"]);
+  assert.deepEqual(statusPayload.changes[0].source, []);
   const detailed = statusFor(cwd, "retry-policy");
   assert.deepEqual(detailed.plantUml, { checked: false, valid: null });
 });
@@ -93,6 +99,14 @@ test("change validate, diff and render cover isolated add, modify and delete ove
   const fake = fakePlantUml();
   const validated = run(cwd, "change", "validate", "reshape-domain", "--json", { ARCH_LENS_PLANTUML: fake });
   assert.equal(validated.status, 0, validated.stderr || validated.stdout);
+  const validation = JSON.parse(validated.stdout);
+  assert.deepEqual(validation.source.map((item) => item.path), [
+    ".arch-lens/diagrams/existing/modify.domain.puml",
+    ".arch-lens/diagrams/new/add.domain.puml"
+  ]);
+  assert.ok(validation.source.every((item) => item.noteCount === 0 && item.noteLineShare === 0));
+  const detailed = statusFor(cwd, "reshape-domain");
+  assert.deepEqual(detailed.source, validation.source);
   const diffed = run(cwd, "change", "diff", "reshape-domain", "--json");
   assert.equal(diffed.status, 0, diffed.stderr || diffed.stdout);
   const diff = JSON.parse(diffed.stdout);
@@ -125,6 +139,48 @@ test("change validate, diff and render cover isolated add, modify and delete ove
   const refreshed = run(cwd, "change", "render", "reshape-domain", "--json", { ARCH_LENS_PLANTUML: fake });
   assert.equal(refreshed.status, 0, refreshed.stderr || refreshed.stdout);
   assert.equal(fs.existsSync(path.join(cwd, view.output, "new/add.domain.svg")), false);
+});
+
+test("change validate and status expose note warnings without failing the pack", () => {
+  const cwd = protocolRepo();
+  const id = "note-budget";
+  assert.equal(run(cwd, "change", "new", id, "--json").status, 0);
+  const relative = "notes/budget.domain.puml";
+  const target = path.join(cwd, ".arch-lens/changes", id, "diagrams", relative);
+  const rendered = path.join(cwd, ".arch-lens/changes", id, "rendered", relative.replace(/\.puml$/i, ".svg"));
+  const content = `@startuml
+' arch-lens: type=domain
+' arch-lens: question=Which note policy is visible?
+title Note budget
+class Order
+note right
+line one
+line two
+line three
+line four
+end note
+note left: short one
+note left: short two
+note left: short three
+@enduml
+`;
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.mkdirSync(path.dirname(rendered), { recursive: true });
+  fs.writeFileSync(target, content);
+  fs.writeFileSync(rendered, fakeSvg(content));
+  preparePack(cwd, id, [{ path: ".arch-lens/diagrams/notes/budget.domain.puml", operation: "add" }]);
+
+  const validated = run(cwd, "change", "validate", id, "--json", { ARCH_LENS_PLANTUML: fakePlantUml() });
+  assert.equal(validated.status, 0, validated.stderr || validated.stdout);
+  const validation = JSON.parse(validated.stdout);
+  assert.equal(validation.valid, true);
+  assert.equal(validation.source[0].noteCount, 4);
+  assert.equal(validation.source[0].maxNoteContentLines, 4);
+  assert.ok(validation.diagnostics.some((item) => item.code === "NOTE_BUDGET_EXCEEDED" && item.severity === "warning"));
+  assert.ok(validation.diagnostics.some((item) => item.code === "NOTE_TOO_LONG" && item.severity === "warning"));
+  const status = statusFor(cwd, id);
+  assert.deepEqual(status.source, validation.source);
+  assert.ok(status.diagnostics.some((item) => item.code === "NOTE_LINE_SHARE_HIGH" && item.severity === "warning"));
 });
 
 test("a worktree rejects a second active Change Pack before writing assets", () => {

@@ -40,7 +40,7 @@ test("CLI exposes the preview Skill-first surface and keeps removed or semantic 
     schemaVersion: 1,
     cliVersion: "0.1.0-alpha.1",
     workflowProtocol: 1,
-    features: ["plantuml-batch-render", "change-pack-v1", "approval-digest-v1", "completion-approval-v1", "managed-plantuml-runtime-v1", "change-overlay-v1", "single-active-change-v1", "model-baseline-freshness-v1", "tracked-svg-mirror-v1", "svg-facts-v1", "visual-review-gate-v1"]
+    features: ["plantuml-batch-render", "change-pack-v1", "approval-digest-v1", "completion-approval-v1", "managed-plantuml-runtime-v1", "change-overlay-v1", "single-active-change-v1", "model-baseline-freshness-v1", "tracked-svg-mirror-v1", "svg-facts-v1", "note-budget-v1", "visual-review-gate-v1"]
   });
   assert.equal(removed.status, 1);
   assert.match(removed.stderr, /未知命令/);
@@ -331,6 +331,66 @@ test("diagrams check validates metadata and PlantUML syntax through the real CLI
   fs.rmSync(path.join(cwd, ".arch-lens/diagrams/sales/broken.puml"));
   fs.writeFileSync(good, "@startuml\nclass Order\n@enduml\n");
   assertJsonDiagnostic(run(cwd, "diagrams", "check", "--json", { ARCH_LENS_PLANTUML: fake }), "DIAGRAM_METADATA_REQUIRED");
+});
+
+test("diagram checks expose source-level note facts without treating budget guidance as an error", () => {
+  const cwd = workspace();
+  const body = [
+    "' note right: 这是注释，不应计入 note 预算",
+    ...Array.from({ length: 24 }, (_, index) => `class Concept${index}`),
+    "note right: 读图必需的短约束",
+    "note left: 只保留必要语义",
+    "note over Concept0: 末行可锚定 D001"
+  ].join("\n");
+  writeDiagram(cwd, "notes/order.domain.puml", diagram("domain", "note 预算是否可见？", "Note 预算", body));
+
+  const checked = run(cwd, "diagrams", "check", "--json", { ARCH_LENS_PLANTUML: fakePlantUml() });
+  assert.equal(checked.status, 0, checked.stderr || checked.stdout);
+  const payload = JSON.parse(checked.stdout);
+  const fact = payload.source.find((item) => item.path.endsWith("notes/order.domain.puml"));
+  assert.equal(fact.type, "domain");
+  assert.equal(fact.noteBudget, 3);
+  assert.equal(fact.noteCount, 3);
+  assert.equal(fact.noteLineCount, 3);
+  assert.ok(fact.noteLineShare <= 0.1, JSON.stringify(fact));
+  assert.equal(fact.maxNoteContentLines, 1);
+  assert.ok(fact.maxNoteCharacters > 0);
+  assert.deepEqual(payload.diagnostics.filter((item) => item.code.startsWith("NOTE_")), []);
+});
+
+test("note budget, length and line-share diagnostics remain warnings", () => {
+  const cwd = workspace();
+  const body = [
+    "state Created",
+    "note right",
+    "第一行",
+    "第二行",
+    "第三行",
+    "第四行",
+    "end note",
+    "note left: 短约束",
+    "note over Created: 短约束"
+  ].join("\n");
+  writeDiagram(cwd, "notes/order.state.puml", diagram("state", "note 预算如何提示？", "交易状态", body));
+
+  const checked = run(cwd, "diagrams", "check", "--json", { ARCH_LENS_PLANTUML: fakePlantUml() });
+  assert.equal(checked.status, 0, checked.stderr || checked.stdout);
+  const payload = JSON.parse(checked.stdout);
+  assert.equal(payload.valid, true);
+  const noteDiagnostics = payload.diagnostics.filter((item) => item.code.startsWith("NOTE_"));
+  assert.deepEqual(new Set(noteDiagnostics.map((item) => item.code)), new Set(["NOTE_BUDGET_EXCEEDED", "NOTE_TOO_LONG", "NOTE_LINE_SHARE_HIGH"]));
+  assert.ok(noteDiagnostics.every((item) => item.severity === "warning"));
+  const fact = payload.source[0];
+  assert.equal(fact.noteBudget, 2);
+  assert.equal(fact.noteCount, 3);
+  assert.equal(fact.noteLineCount, 8);
+  assert.equal(fact.maxNoteContentLines, 4);
+  assert.ok(fact.noteLineShare > 0.1);
+
+  const human = run(cwd, "diagrams", "check", { ARCH_LENS_PLANTUML: fakePlantUml() });
+  assert.equal(human.status, 0, human.stderr || human.stdout);
+  assert.match(human.stdout, /NOTE_BUDGET_EXCEEDED/);
+  assert.match(human.stdout, /NOTE_TOO_LONG/);
 });
 
 test("diagrams check accepts an explicitly configured PlantUML JAR through PATH java", () => {
