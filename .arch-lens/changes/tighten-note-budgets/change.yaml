@@ -1,0 +1,12 @@
+schemaVersion: 1
+workflowProtocol: 1
+id: tighten-note-budgets
+baseCommit: f87f547c3265c3ce5a76467126bafdd7b4813710
+createdAt: 2026-09-23T02:37:25.952Z
+diagrams:
+  - path: .arch-lens/diagrams/check-and-render.sequence.puml
+    operation: modify
+  - path: .arch-lens/diagrams/product-goals.use-case.puml
+    operation: modify
+  - path: .arch-lens/diagrams/runtime-responsibilities.component.puml
+    operation: modify
