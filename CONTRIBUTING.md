@@ -39,6 +39,8 @@ hotfix/<version>-<slug>
 
 模型敏感变更默认在一个 PR 中保留候选模型、model-only commit、实现、验证和归档的提交顺序；高风险变更可拆成模型 PR 与实现 PR。仓库使用 rebase merge，不使用 squash 或 merge commit，以保留这些独立提交。
 
+rebase merge 会重写被合并提交的哈希。集成到 `main` 之后，Change Pack 归档记录里的 commit 引用（`verification.md` 的 `implementation-commit`、`approval.yaml` 的 `implementationCommit` 与 `reviewedImplementationCommit`）可能不再从 `main` 可达，也可能已被 Git 回收。归档包不参与 CLI 门禁校验，这些引用只作为写入时的审计线索保留，不是可长期反查的定位符；集成后核对以集成结果的内容为准。需要长期可核对的证据时，在 PR 描述或 Release Notes 中记录集成前后的对应关系。
+
 ## 版本与发布
 
 - 首个外部预览版为 `0.1.0-alpha.1`，npm 使用 `next` dist-tag，GitHub 使用 `v0.1.0-alpha.1` 标签和预发布 Release。

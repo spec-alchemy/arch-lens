@@ -66,6 +66,8 @@ ID 使用最长 64 字符的小写 kebab-case。每个变更至少声明一张�
 
 implementation commit 是被审查的代码提交。它之后只能提交 `tasks.md` 和 `verification.md` 证据；completion approval 再绑定包含证据的当前 HEAD，避免 commit 哈希自引用。
 
+`implementation-commit` 记录的是写入时的 Git 事实。rebase merge 会重写提交哈希，集成后该引用可能不再从目标分支可达；归档包不参与 CLI 门禁校验，这些引用只作为审计线索保留，不保证长期可反查。
+
 ## 摘要和门禁
 
 设计摘要绑定 `principles.md`、change.yaml、proposal.md、decisions.md、声明的候选 `.puml`/SVG 字节和 baseCommit；artifact 使用 logical canonical path，因此批准前读取 overlay，提升后读取顶层同一路径，摘要保持一致。不绑定 tasks.md。修改 tasks 可细化实施，修改其他绑定资产会让批准 stale。
