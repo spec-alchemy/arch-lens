@@ -52,7 +52,7 @@ npm publish --access public --tag next
 GitHub 预发布版本使用同名 tag：
 
 ```sh
-git tag v0.1.0-alpha.3
+git tag -a v0.1.0-alpha.3 -m "Arch Lens v0.1.0-alpha.3"
 git push origin v0.1.0-alpha.3
 gh release create v0.1.0-alpha.3 --repo spec-alchemy/arch-lens --title "Arch Lens v0.1.0-alpha.3" --generate-notes --prerelease
 ```

@@ -32,6 +32,11 @@ test("公开基线只呈现当前产品入口并保留合法历史归档", () =>
   assert.match(releasing, /门禁决定「能不能发」/);
   assert.match(releasing, /不\*\*采用「正式版每 2 周发一次」的固定日历/);
   assert.match(releasing, /--tag beta/);
+  assert.match(releasing, /git tag -a vX\.Y\.Z-alpha\.N -m/);
+  assert.match(releasing, /附注 tag/);
+  assert.match(releasing, /release prep commit/);
+  assert.doesNotMatch(read("CONTRIBUTING.md"), /git tag v0\.1\.0-alpha\.3\n/);
+  assert.doesNotMatch(read("README.md"), /git tag v0\.1\.0-alpha\.3\n/);
   assert.match(read("CONTRIBUTING.md"), /RELEASING\.md/);
   assert.doesNotMatch(readme, /\/Users\/|\/private\/tmp|\/tmp\/|worktrees\//);
 
