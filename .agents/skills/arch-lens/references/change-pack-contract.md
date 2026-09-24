@@ -41,7 +41,7 @@ rendered/**/*.svg        # render 生成的临时视觉审查材料
 arch-lens change refresh-baseline <id>
 ```
 
-该命令只显式刷新本地内容基线，不合并候选、不评价语义，并使既有设计批准 stale。不得自动刷新。
+该命令只显式刷新本地内容基线，不合并候选、不评价语义，并使既有设计批准 stale。不得自动刷新。它在 `apply-model` 后仍然有效：若新增或修改候选 overlay，`baselineDigest` 会先变 stale，再显式刷新到当前 canonical 基底。
 
 ## 三类内容摘要
 
@@ -57,8 +57,8 @@ arch-lens change refresh-baseline <id>
 
 1. 设计批准前清除 proposal、decisions、tasks 和 principles 中的 `[TODO]`。
 2. 全部未决问题已解决。
-3. 每个 add/modify 候选都有当前新鲜 SVG。
-4. decisions.md 为每张候选记录 `PASS`，且已实际打开 SVG 检查裁切、重叠、交叉线、密度、边界和阅读顺序。
+3. 每个新增或发生变化的 add/modify 候选都有当前新鲜 SVG；如果图与上一份 design approval 的 SHA-256 逐字节一致，可复用已有视觉审查，不要求重新 render。
+4. decisions.md 为每张候选记录 `PASS`；fresh SVG 必须已实际打开并检查裁切、重叠、交叉线、密度、边界和阅读顺序。
 5. `designDigest` current。
 
 人类批准后记录：
@@ -69,6 +69,12 @@ arch-lens change apply-model <id>
 ```
 
 `apply-model` 原子提升 `.puml`，删除操作移除 canonical `.puml`，清理候选 `diagrams/`、`rendered/` 和可清理的 canonical SVG 缓存。它不读取 Git，也不要求 model-only commit。
+
+### apply-model 后修订
+
+- 仅 `principles.md` 或提案文字变化：确认内容后运行 `change refresh-baseline <id>`，再重新记录 design approval。图未变化时可复用已有视觉证据。
+- 图内容变化：在 Change Pack 写入 `modify` overlay；基线 stale 时先 `change refresh-baseline <id>`，再 `change render <id>`，逐图得到 `PASS`，重新记录 design approval，最后再次运行 `change apply-model <id>`。
+- 不得通过伪造 `delete` 声明、直接改写 canonical、并行新 Pack 或提前归档绕过该路径。
 
 ## 完成批准
 

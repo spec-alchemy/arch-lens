@@ -121,7 +121,7 @@ export async function runCli(argv = process.argv) {
     }));
   change.command("refresh-baseline").argument("<id>", "Change ID")
     .option("--json", "输出机器可读 JSON")
-    .description("把当前 principles 与 canonical .puml 内容显式记录为新模型基线，并使既有设计批准失效。")
+    .description("在任意活动阶段显式记录当前 principles 与 canonical .puml 基线，并使既有设计批准失效。")
     .action((id, options) => runOrExit(options.json, () => {
       const result = refreshBaseline(process.cwd(), id);
       emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, `已把 Change Pack ${id} 的 baselineDigest 刷新为 ${result.baselineDigest}；必须重新审查设计。`);
@@ -204,7 +204,7 @@ function formatStatus(result) {
     `Model baseline: ${result.baseline.state}`,
     `Design approval: ${result.designApproval.state}`,
     `Completion approval: ${result.completionApproval.state}`,
-    `Review SVG: ${result.svg.valid === true ? "fresh" : result.svg.valid === false ? "invalid" : "not checked"} (${result.svg.files.length} files)`,
+    `Review SVG: ${result.svg.reused ? "reused" : result.svg.valid === true ? "fresh" : result.svg.valid === false ? "invalid" : "not checked"} (${result.svg.files.length} files)`,
     `Visual review: ${result.visualReview.pass}/${result.visualReview.total} PASS`,
     `Tasks: ${result.tasks.completed}/${result.tasks.total}`,
     `Open questions: ${result.openQuestions.open}/${result.openQuestions.total}`,

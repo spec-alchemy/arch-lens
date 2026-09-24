@@ -2,6 +2,14 @@
 
 本项目的公开变化记录在此文件中。
 
+## 0.1.0-alpha.5 - 2026-09-24
+
+- 修复 `apply-model` 后 `principles.md` 或新 candidate overlay 导致 `baselineDigest` 无法通过官方路径刷新、重批和再次 apply 的生命周期缺口。
+- `change refresh-baseline` 现在可在 `apply-model` 后使用；它仍只刷新本地内容基线并使 design approval stale，不会自动批准。
+- 设计与上一份 design approval 逐字节一致时，重新批准可复用已有视觉审查；图内容变化时仍必须 fresh SVG、逐图 PASS，并再次 `apply-model`。
+- `change status` 暴露 `pendingOverlay` 与 `svg.reused`，明确当前是否需要刷新基线或重新 render。
+- 发布引用：`v0.1.0-alpha.5`。
+
 ## 0.1.0-alpha.4 - 2026-09-24
 
 - **Breaking:** 引入 `workflowProtocol 2` 和单一 local-first 模式。CLI/Skill 不再读取、要求或解释 Git，工作区由 `.arch-lens/` 向上发现，`init` 可在非 Git 目录运行。

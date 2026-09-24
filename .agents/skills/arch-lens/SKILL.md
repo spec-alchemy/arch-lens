@@ -47,10 +47,10 @@ arch-lens capabilities --json
 - CLI 只报告本地文件、内容摘要、Schema、PlantUML facts 和人工审批记录；CLI 成功不等于设计正确，也不读取或解释 Git。
 - 人类负责设计批准、完成验收和风险接受。没有当前会话中的明确授权，禁止调用 `change record-approval`。
 - 不手工编辑 `approval.yaml`，不把 CLI 命令命名为 review、approve 或 verify，也不让脚本模拟语义判断。
-- `baselineDigest` stale 时返回模型审查；实现推翻设计时更新 `.puml` 并重新批准。
+- `baselineDigest` stale 时返回模型审查；实现推翻设计时更新 `.puml` 并重新批准。`apply-model` 后仍可因 `principles.md` 或新 overlay 显式 `refresh-baseline`。
 - 顶层图集只保存批准模型；新增和修改候选写入 Change Pack overlay，删除只写入 change.yaml。
-- add/modify 候选必须先用 `change render <id>` 生成 fresh SVG，并由人类逐图给出 PASS 后才可请求设计批准；SVG 不进入 `designDigest`。
-- `change apply-model <id>` 只提升 `.puml` 并清理候选/临时 SVG；不得要求或创建 model-only commit。
+- add/modify 候选必须具备 fresh SVG 或与上一份 design approval 逐字节一致的复用证据，并由人类逐图给出 PASS 后才可请求设计批准；SVG 不进入 `designDigest`。
+- `change apply-model <id>` 只提升 `.puml` 并清理候选/临时 SVG；候选图发生变化时，重新批准后允许再次 apply；不得要求或创建 model-only commit。
 - `designDigest` 绑定 principles、change.yaml、proposal、decisions 和候选 `.puml`；`completionDigest` 再绑定 tasks 与 verification。
 - 仓库需要提交顺序、patch-id、rebase 或 release 审计时，使用仓库专用 CI/脚本；不得把这些事实写入 CLI/Skill 产品契约。
 
