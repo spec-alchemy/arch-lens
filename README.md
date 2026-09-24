@@ -2,7 +2,7 @@
 
 Arch Lens 是面向人类与 AI 协作的 Skill-first PlantUML 业务建模与变更审查工作区。它帮助团队理解参与者目标、系统用例、领域实体与规则、业务流程、职责协作、生命周期、组件边界和接口，并让设计决策与实现证据保持内容可追溯。
 
-当前版本为 `0.1.0-alpha.3`，本地内容协议为 `workflowProtocol 2`。协议 2 允许显式不兼容旧的 commit/SVG 审计模型。
+当前版本为 `0.1.0-alpha.4`，本地内容协议为 `workflowProtocol 2`。协议 2 允许显式不兼容旧的 commit/SVG 审计模型。
 
 ## 安装
 

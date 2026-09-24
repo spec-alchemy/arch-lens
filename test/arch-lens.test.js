@@ -13,7 +13,7 @@ test("CLI exposes protocol 2 local-first commands and no Git-specific surface", 
   const renderHelp = runCli(cwd, "diagrams", "render", "--help");
   const capabilities = assertJsonSuccess(runCli(cwd, "capabilities", "--json"));
 
-  assert.equal(version.stdout.trim(), "0.1.0-alpha.3");
+  assert.equal(version.stdout.trim(), "0.1.0-alpha.4");
   assert.match(help.stdout, /Skill-first 的 PlantUML/);
   assert.doesNotMatch(help.stdout, /\bgit\b|Git/);
   assert.match(changeHelp.stdout, /refresh-baseline/);
@@ -22,7 +22,7 @@ test("CLI exposes protocol 2 local-first commands and no Git-specific surface", 
   assert.match(renderHelp.stdout, /工作区\/\.arch-lens\/rendered/);
   assert.deepEqual(capabilities, {
     schemaVersion: 2,
-    cliVersion: "0.1.0-alpha.3",
+    cliVersion: "0.1.0-alpha.4",
     workflowProtocol: 2,
     features: [
       "plantuml-batch-render",
