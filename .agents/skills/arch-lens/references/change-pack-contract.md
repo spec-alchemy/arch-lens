@@ -1,100 +1,109 @@
 # Change Pack 合同
 
-Change Pack 为架构敏感变更保存决策上下文和实施证据，但不复制 PlantUML 业务模型。没有建模影响的普通代码修改无需创建 Change Pack。
+CLI 只做事实：解析本地文件、计算内容摘要、检查 PlantUML、渲染临时 SVG、机械记录人工决定并原子归档。CLI 不评价语义，不读取 Git，也不自动批准。
 
-## 固定资产
+## 工作区与活动变更
+
+- 工作区根由当前目录向上查找最近的 `.arch-lens/` 得到。
+- `init` 直接在调用目录创建协议资产，不要求 Git 仓库、HEAD 或干净状态。
+- `.arch-lens/` 是否被 Git 跟踪不影响任何命令；它可以被整体 gitignore。
+- 每个工作区最多一个活动 Change Pack。并行变更使用独立工作区，完成后逐个整合。
+
+## 固定文件
+
+每个活动包包含：
 
 ```text
-.arch-lens/
-├── principles.md
-├── diagrams/**/*.puml              # 已批准模型
-├── rendered/**/*.svg               # 必需、受版本控制的标准镜像
-├── changes/
-│   ├── <change-id>/
-│   │   ├── change.yaml
-│   │   ├── proposal.md
-│   │   ├── decisions.md
-│   │   ├── tasks.md
-│   │   ├── approval.yaml
-│   │   ├── verification.md
-│   │   ├── diagrams/**/*.puml      # 待批准 add/modify overlay
-│   │   └── rendered/**/*.svg       # add/modify 候选的必需标准镜像
-│   └── archive/
+change.yaml
+proposal.md
+decisions.md
+tasks.md
+approval.yaml
+verification.md
+diagrams/**/*.puml       # 可选 add/modify overlay
+rendered/**/*.svg        # render 生成的临时视觉审查材料
 ```
 
-- `principles.md`：项目目的、建模边界、决策原则和质量门禁。
-- `proposal.md`：问题证据、目标、非目标、AC、假设和未决问题。
-- `decisions.md`：取舍的上下文、决定、替代方案和后果。
-- `tasks.md`：实现清单，不承载设计语义。
-- `approval.yaml`：CLI 追加的人工决定和内容摘要，禁止手工编辑。`reviewer` 是稳定的人类标识，同一审查者始终使用同一写法，便于跨 Change Pack 追溯。
-- `verification.md`：AI 的实现语义审查、AC 结果、测试证据和残余风险。
-- 顶层 `diagrams/`：唯一已批准业务模型。
-- Change Pack `diagrams/`：未批准候选，不是长期副本；提升后删除，归档不保留 `.puml`。
-- 两处 `rendered/`：受版本控制、只含 SVG，并严格镜像相邻 diagrams 的路径。SVG 只能由 CLI 使用锁定受管 PlantUML 生成；它是派生审查产物，PlantUML 仍是唯一业务模型。
+`change.yaml` 只保存协议版本、ID、本地内容基线和 diagram operations。候选 overlay 的 `.puml` 路径必须与 canonical 路径一致；delete 不保留占位图。
 
-## change.yaml
+> 候选 SVG 是审查期间的可删除派生材料，不是归档、摘要、Git 审计或长期状态的一部分。
 
-```yaml
-schemaVersion: 1
-workflowProtocol: 1
-id: notification-retry-policy
-baseCommit: <full-git-commit>
-createdAt: <UTC-ISO-8601>
-diagrams:
-  - path: .arch-lens/diagrams/notification/retry.state.puml
-    operation: add
+## 内容基线
+
+`change.yaml` 的 `baselineDigest` 绑定排序后的：
+
+- `.arch-lens/principles.md`
+- 全部 canonical `.arch-lens/diagrams/**/*.puml`
+
+`baselineArtifacts` 保存同一路径集合与 SHA-256，供报告变化路径。canonical 内容变化后，基线变为 stale：
+
+```sh
+arch-lens change refresh-baseline <id>
 ```
 
-ID 使用最长 64 字符的小写 kebab-case。每个变更至少声明一张图；operation 只使用 `add`、`modify`、`delete`。add/modify 的候选位于 `<pack>/diagrams/<path-after-.arch-lens/diagrams/>`，并具有 `<pack>/rendered/` 下的同路径 SVG；delete 不得保留候选 `.puml` 或 SVG。每个 Git worktree 最多一个活动 Change Pack；并行变更使用独立 branch/worktree，目标分支逐个集成。
+该命令只显式刷新本地内容基线，不合并候选、不评价语义，并使既有设计批准 stale。不得自动刷新。
 
-## Markdown 标识
+## 三类内容摘要
 
-- 验收标准：`- AC-001: ...`
-- 未决问题：`- [ ] Q001: ...`；解决后改为 `[x]` 并写结论。
-- 决策：`## D001: ...`，包含 Context、Decision、Alternatives、Consequences。
-- 任务：`- [ ] T001 [AC-001] ...`
-- 视觉审查：`- .arch-lens/diagrams/path.puml: PASS|CONCERNS|FAIL - evidence`
-- 验证：`- AC-001: PASS|FAIL|NOT-RUN - evidence`
+- `baselineDigest`：principles + 全部 canonical `.puml`。
+- `designDigest`：baselineDigest + change.yaml + proposal + decisions + 声明的候选/已提升 `.puml` 内容。
+- `completionDigest`：designDigest + tasks.md + verification.md 内容。
 
-`verification.md` 还必须声明：
+摘要只依赖 UTF-8 文件字节、稳定 JSON 和 SHA-256。SVG、mtime、提交哈希、patch-id 和 worktree 状态均不进入摘要。
 
-```markdown
-<!-- arch-lens: semantic-review=pass|concerns|fail|pending -->
-<!-- arch-lens: design-digest=<sha256>|pending -->
-<!-- arch-lens: implementation-commit=<full-commit>|pending -->
-<!-- arch-lens: implementation-patch-id=<sha1>|pending -->
+## 设计和 apply-model
+
+设计批准要求：
+
+1. 设计批准前清除 proposal、decisions、tasks 和 principles 中的 `[TODO]`。
+2. 全部未决问题已解决。
+3. 每个 add/modify 候选都有当前新鲜 SVG。
+4. decisions.md 为每张候选记录 `PASS`，且已实际打开 SVG 检查裁切、重叠、交叉线、密度、边界和阅读顺序。
+5. `designDigest` current。
+
+人类批准后记录：
+
+```sh
+arch-lens change record-approval <id> --stage design --reviewer <human-name>
+arch-lens change apply-model <id>
 ```
 
-implementation commit 是被审查的代码提交。它之后只能提交 `tasks.md` 和 `verification.md` 证据；completion approval 再绑定包含证据的当前 HEAD，避免 commit 哈希自引用。
+`apply-model` 原子提升 `.puml`，删除操作移除 canonical `.puml`，清理候选 `diagrams/`、`rendered/` 和可清理的 canonical SVG 缓存。它不读取 Git，也不要求 model-only commit。
 
-`implementation-commit` 记录提交身份，`implementation-patch-id` 记录被审查实现的内容标识（`git patch-id --stable`）。二者分工：身份是写入时的事实，内容标识承担跨历史重写的核对职责。completion approval 必须同时记录二者；只有缺少该字段的既有归档记录允许省略。
+## 完成批准
 
-`implementation-commit` 记录的是写入时的 Git 事实。rebase merge 会重写提交哈希，集成后该引用可能不再从目标分支可达；归档包不参与 CLI 门禁校验，这些引用只作为审计线索保留，不保证长期可反查。
+完成批准要求：
 
-## 摘要和门禁
+- design approval current；
+- tasks.md 全部完成；
+- proposal 中全部 AC 在 verification.md 为 PASS；
+- semantic-review 显式为 pass；
+- verification.md 绑定当前 designDigest。
 
-设计摘要绑定 `principles.md`、change.yaml、proposal.md、decisions.md、声明的候选 `.puml`/SVG 字节和 baseCommit；artifact 使用 logical canonical path，因此批准前读取 overlay，提升后读取顶层同一路径，摘要保持一致。不绑定 tasks.md。修改 tasks 可细化实施，修改其他绑定资产会让批准 stale。
+```sh
+arch-lens change record-approval <id> --stage completion --reviewer <human-name>
+```
 
-设计批准前比较 `baseCommit..HEAD` 的项目原则和顶层 `.puml`。发现外部模型变化时状态为 stale；先用 Git 同步目标分支，再显式运行 `arch-lens change refresh-base <id>`。该命令只更新 baseCommit，不合并候选、不判断语义，并使既有批准 stale。
+completion approval 只绑定内容摘要和人工审查者。代码提交身份、实现 patch-id、Git 祖先关系或 clean worktree 均不属于协议门禁。
 
-设计批准要求每张 add/modify 图具有 PASS 视觉审查记录。批准后运行 `change apply-model`：原子应用 add/modify/delete 的 `.puml`/SVG 对并移除候选。再把项目原则、批准图、标准 SVG、Change Pack 和 approval.yaml 形成独立 model-only commit。CLI 会从 Git 历史确认该 commit 只包含允许路径。
-
-完成批准要求：设计批准 current、model-only commit 可追溯、全部任务完成、全部 AC 为 PASS、semantic review 为 pass、verification 绑定有效设计摘要和实现祖先 commit、工作区干净。
-
-## CLI 只做事实
+## 命令语义
 
 ```text
 arch-lens change new <id>
-arch-lens change status [id] [--json]
-arch-lens change validate <id> [--json]
-arch-lens change diff <id> [--json]
-arch-lens change render <id> [--json]
-arch-lens change refresh-base <id> [--json]
-arch-lens change apply-model <id> [--json]
+arch-lens change status [id]
+arch-lens change validate <id>
+arch-lens change diff <id>
+arch-lens change render <id>
+arch-lens change refresh-baseline <id>
+arch-lens change apply-model <id>
 arch-lens change record-approval <id> --stage design|completion --reviewer <name>
-arch-lens change evidence <id> [--json]
-arch-lens change archive-evidence <id> [--ref <ref>] [--json]
-arch-lens change archive <id> [--json]
+arch-lens change evidence <id>
+arch-lens change archive <id>
 ```
 
-`archive-evidence` 只对已归档包报告完成证据的提交身份可达性和实现内容标识匹配事实，不做语义结论、不自动改写记录。`status` 和 `validate` 不做语义结论，只报告基线、源图 note 统计、SVG 哈希、viewBox、宽高、宽高比和稳定风险诊断；`diff` 只返回 base/candidate 文本差异；`render` 使用锁定受管运行时生成标准候选 SVG；`refresh-base` 只更新已同步 HEAD 的基线事实；`apply-model` 只在现有人工批准有效时执行确定性文件提升；`evidence` 只读取 Git、任务和 AC 事实；`record-approval` 只记录当前会话中人类已经作出的决定。
+- `status`/`validate`/`evidence` 只报告本地内容事实，不读取 Git。
+- `diff` 比较 canonical 文本与候选 overlay，不落盘。
+- `render` 使用锁定受管 PlantUML 刷新候选 SVG 审查材料。
+- `record-approval` 只记录当前会话中人类已经作出的决定，不自行判断或批准。
+- `archive` 在 completion approval current 时原子移动 Change Pack。
+- 已删除的 `archive-evidence` 和 Git/patch-id 能力不得重新进入公开接口。

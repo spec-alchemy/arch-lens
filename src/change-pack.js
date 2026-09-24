@@ -1,5 +1,4 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseDocument, stringify as stringifyYaml } from "yaml";
@@ -7,9 +6,7 @@ import {
   completionDigest,
   designDigestFromArtifacts,
   emptyApproval,
-  findApprovalCommit,
   readApproval,
-  safeApproval as safeApprovalFile,
   validateApprovalValue
 } from "./approval.js";
 import {
@@ -26,45 +23,42 @@ import {
   relativePosix,
   replaceDirectoryAtomically,
   sha256,
+  stableJson,
   writeTreeFile
 } from "./core.js";
+import { requireProtocolWorkspace } from "./repository.js";
 import {
-  changedFilesBetween,
-  changedPaths,
-  commitsBetween,
-  git,
-  gitPatchId,
-  gitRef,
-  gitShow,
-  isAncestor,
-  patchIdIndex,
-  requireCleanWorktree,
-  requireProtocolWorkspace
-} from "./repository.js";
-import { discoverDiagrams, inspectDiagramRecords, renderDiagramRecords, svgFacts, validateDiagramRecordsWithFacts, validateSvgMirror } from "./plantuml.js";
+  discoverDiagrams,
+  inspectDiagramRecords,
+  renderDiagramRecords,
+  validateDiagramRecordsWithFacts,
+  validateSvgMirror
+} from "./plantuml.js";
 
 const moduleRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const templateRoot = path.join(moduleRoot, "templates", "change-pack");
 const CHANGE_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const FULL_COMMIT = /^[0-9a-f]{40,64}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
 const OPERATIONS = new Set(["add", "modify", "delete"]);
 const PACK_FILES = ["change.yaml", "proposal.md", "decisions.md", "tasks.md", "approval.yaml", "verification.md"];
-const CHANGE_KEYS = new Set(["schemaVersion", "workflowProtocol", "id", "baseCommit", "createdAt", "diagrams"]);
+const CHANGE_KEYS = new Set(["schemaVersion", "workflowProtocol", "id", "baselineDigest", "baselineArtifacts", "createdAt", "diagrams"]);
 const DIAGRAM_KEYS = new Set(["path", "operation"]);
 
 export function createChange(cwd, id) {
   validateChangeId(id);
   const workspace = requireProtocolWorkspace(cwd);
-  requireChangeCreationWorktree(workspace);
+  requireNoActiveChange(workspace);
   const target = path.join(workspace.changesRoot, id);
   if (fs.existsSync(target)) throw new Error(`Change Pack 已存在：${id}`);
   if (findArchivedChange(workspace.archiveRoot, id)) throw new Error(`该 Change ID 已归档，不能重复使用：${id}`);
 
+  const baseline = baselineSnapshot(workspace);
   const manifest = {
     schemaVersion: SCHEMA_VERSION,
     workflowProtocol: WORKFLOW_PROTOCOL,
     id,
-    baseCommit: workspace.head,
+    baselineDigest: baseline.digest,
+    baselineArtifacts: baseline.artifacts,
     createdAt: new Date().toISOString(),
     diagrams: []
   };
@@ -74,17 +68,14 @@ export function createChange(cwd, id) {
     writeTreeFile(temporary, "approval.yaml", stringifyYaml(emptyApproval(), { lineWidth: 0 }));
     fs.mkdirSync(path.join(temporary, "diagrams"));
   });
-  return { id, path: relativePosix(workspace.root, target), baseCommit: workspace.head, workflowProtocol: WORKFLOW_PROTOCOL };
+  return { id, path: relativePosix(workspace.root, target), baselineDigest: baseline.digest, workflowProtocol: WORKFLOW_PROTOCOL };
 }
 
 export function changeStatus(cwd, id) {
   const workspace = requireProtocolWorkspace(cwd);
   requireSingleActiveChange(workspace, id);
-  if (!id) {
-    return { workflowProtocol: WORKFLOW_PROTOCOL, changes: listActiveChangeIds(workspace).map((changeId) => summarizePack(workspace, readPack(workspace, changeId))) };
-  }
-  const pack = readPack(workspace, id);
-  return statusForPack(workspace, pack);
+  if (!id) return { workflowProtocol: WORKFLOW_PROTOCOL, changes: listActiveChangeIds(workspace).map((changeId) => summarizePack(workspace, readPack(workspace, changeId))) };
+  return statusForPack(workspace, readPack(workspace, id));
 }
 
 export function validateChangeCommand(cwd, id) {
@@ -105,72 +96,58 @@ export function diffChange(cwd, id) {
   const files = [];
   let patch = "";
   for (const item of pack.change.diagrams) {
-    const base = gitShow(workspace.root, pack.change.baseCommit, item.path);
+    const base = item.operation === "add" ? null : canonicalBytes(workspace, item.path);
     const candidate = candidateBytes(pack, item);
-    const record = {
-      path: item.path,
-      operation: item.operation,
-      baseSha256: base ? sha256(base) : null,
-      candidateSha256: candidate ? sha256(candidate) : null
-    };
-    files.push(record);
+    files.push({ path: item.path, operation: item.operation, baseSha256: base ? sha256(base) : null, candidateSha256: candidate ? sha256(candidate) : null });
     const filePatch = unifiedDiff(item.path, base, candidate);
-    if (filePatch) patch += `${patch ? "\n" : ""}${filePatch.trimEnd()}\n`;
+    if (filePatch) patch += `${patch ? "\n" : ""}${filePatch}`;
   }
   const design = designDigest(workspace, pack);
-  return { id, baseCommit: pack.change.baseCommit, designDigest: design.digest, files, patch };
+  return { id, baselineDigest: pack.change.baselineDigest, designDigest: design.digest, files, patch };
 }
 
 export function renderChange(cwd, id) {
   const workspace = requireProtocolWorkspace(cwd);
   requireSingleActiveChange(workspace, id);
   const pack = readPack(workspace, id);
-  const validation = validatePack(workspace, pack, { plantUml: false, svg: false });
-  if (validation.diagnostics.some(isError)) throw operationError(`Change Pack 无法渲染：${id}`, validation.diagnostics);
-  const records = pack.change.diagrams.filter((item) => item.operation !== "delete" && fs.existsSync(candidatePath(pack, item))).map((item) => ({
-    path: item.path,
-    relative: diagramRelative(item.path),
-    content: candidateBytes(pack, item)
-  }));
+  if (isPackPromoted(pack)) throw new Error("候选模型已经提升，不能再生成候选 SVG。");
+  const records = candidateDiagramRecords(pack);
+  const diagnostics = inspectDiagramRecords(records).diagnostics;
+  if (diagnostics.some(isError)) throw operationError("候选 PlantUML 无法生成 SVG。", diagnostics.sort(compareDiagnostics));
+  const svgs = renderDiagramRecords(workspace.root, records, diagnostics, { managedOnly: true, inspectPolicy: false });
   const output = pack.renderedRoot;
+  assertNoSymlinkPath(pack.root, output, `Change Pack ${id} rendered 目录`);
   if (records.length === 0) {
     fs.rmSync(output, { recursive: true, force: true });
-    return { id, output: relativePosix(workspace.root, output), rendered: [], source: [], svg: [], diagnostics: [] };
+    return { id, output: relativePosix(workspace.root, output), rendered: [], source: inspectDiagramRecords(records).facts, svg: [], diagnostics };
   }
-  const inspection = inspectDiagramRecords(records);
-  const diagnostics = inspection.diagnostics;
-  const svgs = renderDiagramRecords(workspace.root, records, diagnostics, { managedOnly: true, inspectPolicy: false });
-  const facts = records.map((record, index) => svgFacts(svgs[index], path.join(output, record.relative.replace(/\.puml$/i, ".svg")), workspace.root));
-  diagnostics.push(...facts.flatMap((item) => item.diagnostics));
-  if (diagnostics.some(isError)) throw operationError("PlantUML 生成的标准 SVG 无效。", diagnostics.sort(compareDiagnostics));
-  assertNoSymlinkPath(pack.root, output, `Change Pack ${id} rendered 目录`);
   replaceDirectoryAtomically(output, (temporary) => {
-    records.forEach((record, index) => writeTreeFile(temporary, record.relative.replace(/\.puml$/i, ".svg"), svgs[index]));
+    records.forEach((record, index) => writeTreeFile(temporary, diagramRelative(record.path).replace(/\.puml$/i, ".svg"), svgs[index]));
+  });
+  const facts = records.map((record, index) => {
+    const svgFile = path.join(output, diagramRelative(record.path).replace(/\.puml$/i, ".svg"));
+    return { path: relativePosix(workspace.root, svgFile), sha256: sha256(svgs[index]) };
   });
   return {
     id,
     output: relativePosix(workspace.root, output),
-    rendered: records.map((record) => ({ source: itemCandidateRelative(pack, record.relative), output: relativePosix(workspace.root, path.join(output, record.relative.replace(/\.puml$/i, ".svg"))) })),
-    source: inspection.facts,
+    rendered: records.map((record) => ({ source: record.path, output: relativePosix(workspace.root, path.join(output, diagramRelative(record.path).replace(/\.puml$/i, ".svg"))) })),
+    source: inspectDiagramRecords(records).facts,
     svg: facts,
     diagnostics
   };
 }
 
-export function refreshChangeBase(cwd, id) {
+export function refreshBaseline(cwd, id) {
   const workspace = requireProtocolWorkspace(cwd);
   requireSingleActiveChange(workspace, id);
   const pack = readPack(workspace, id);
-  if (isPackPromoted(pack)) throw new Error("候选模型已经提升，不能刷新 baseCommit。");
-  const disallowed = changedPaths(workspace.root).filter((file) => !isActivePackPath(workspace, file));
-  if (disallowed.length > 0) throw new Error(`刷新基线前只允许当前 Change Pack 存在未提交变化；请先处理：${disallowed.join("、")}`);
-  const previousBaseCommit = pack.change?.baseCommit;
-  if (!FULL_COMMIT.test(previousBaseCommit ?? "") || gitRef(workspace.root, previousBaseCommit) !== previousBaseCommit) throw new Error("change.yaml 必须先具有有效 baseCommit。");
-  if (previousBaseCommit === workspace.head) throw new Error("baseCommit 已经是当前 HEAD，无需刷新。");
-  const changedBaselinePaths = baselineFreshness(workspace, pack).changedPaths;
-  const next = { ...pack.change, baseCommit: workspace.head };
-  atomicWrite(pack.paths.change, stringifyYaml(next, { lineWidth: 0 }));
-  return { id, previousBaseCommit, baseCommit: workspace.head, changedBaselinePaths, designApproval: "stale" };
+  const next = baselineSnapshot(workspace);
+  const previousBaselineDigest = pack.change?.baselineDigest ?? null;
+  if (next.digest === previousBaselineDigest) throw new Error("baselineDigest 已经与当前 principles 和 canonical .puml 一致，无需刷新。");
+  const changedBaselinePaths = compareArtifacts(pack.change?.baselineArtifacts, next.artifacts);
+  atomicWrite(pack.paths.change, stringifyYaml({ ...pack.change, baselineDigest: next.digest, baselineArtifacts: next.artifacts }, { lineWidth: 0 }));
+  return { id, previousBaselineDigest, baselineDigest: next.digest, changedBaselinePaths, designApproval: "stale" };
 }
 
 export function applyModel(cwd, id) {
@@ -181,15 +158,12 @@ export function applyModel(cwd, id) {
   if (!status.structurallyValid) throw operationError("Change Pack 存在结构或文件事实错误，不能提升候选模型。", status.diagnostics);
   if (status.designApproval.state !== "current") throw new Error("只有当前有效的 design approval 才能提升候选模型。");
   if (isPackPromoted(pack)) throw new Error("当前 Change Pack 的候选模型已经提升。无需重复执行 apply-model。");
-  const missingCandidates = pack.change.diagrams.filter((item) => item.operation !== "delete" && !fs.existsSync(candidatePath(pack, item))).map((item) => item.path);
+  const missingCandidates = pack.change.diagrams.filter((item) => item.operation !== "delete" && !isRealFile(candidatePath(pack, item))).map((item) => item.path);
   if (missingCandidates.length > 0) throw new Error(`候选 overlay 不完整，无法提升：${missingCandidates.join("、")}`);
-  const changed = changedPaths(workspace.root);
-  const disallowed = changed.filter((file) => !isActivePackPath(workspace, file) && file !== PRINCIPLES_RELATIVE_PATH);
-  if (disallowed.length > 0) throw new Error(`apply-model 前不得有实现代码或顶层模型变化；请先处理：${disallowed.join("、")}`);
 
-  applyModelMirrorsAtomically(workspace, pack);
+  applyModelAtomically(workspace, pack);
   const current = statusForPack(workspace, readPack(workspace, id));
-  if (current.designApproval.state !== "current") throw new Error("候选提升后设计摘要不一致；请勿提交并检查工作区。");
+  if (current.designApproval.state !== "current") throw new Error("候选提升后设计摘要不一致；请检查工作区。");
   return { id, applied: pack.change.diagrams.map(({ path: diagramPath, operation }) => ({ path: diagramPath, operation })), designDigest: current.designApproval.digest };
 }
 
@@ -207,65 +181,15 @@ export function changeEvidence(cwd, id) {
   requireSingleActiveChange(workspace, id);
   const pack = readPack(workspace, id);
   const status = statusForPack(workspace, pack);
-  const modelCommit = findModelCommit(workspace, pack, status.designApproval.digest);
-  if (!modelCommit) throw new Error("尚未找到包含当前设计批准记录的 model-only commit。");
   return {
     id,
-    baseCommit: pack.change.baseCommit,
-    modelCommit,
-    currentHead: workspace.head,
+    baselineDigest: pack.change?.baselineDigest ?? null,
+    designDigest: status.designApproval.digest,
+    baseline: status.baseline,
     designApproval: status.designApproval,
-    commits: commitsBetween(workspace.root, modelCommit, workspace.head),
-    changedFiles: changedFilesBetween(workspace.root, modelCommit, workspace.head),
+    completionApproval: status.completionApproval,
     tasks: parseTasks(pack.text.tasks),
     acceptanceResults: parseVerification(pack.text.verification).acceptanceResults
-  };
-}
-
-export function changeArchiveEvidence(cwd, id, ref = "HEAD") {
-  const workspace = requireProtocolWorkspace(cwd);
-  validateChangeId(id);
-  const entry = findArchivedChange(workspace.archiveRoot, id);
-  if (!entry) throw new Error(`找不到已归档 Change Pack：${id}`);
-  const root = path.join(workspace.archiveRoot, entry);
-  assertNoSymlinkPath(workspace.archiveRoot, root, `Change Pack archive ${id}`);
-  const paths = { change: path.join(root, "change.yaml"), approval: path.join(root, "approval.yaml"), verification: path.join(root, "verification.md") };
-  for (const [key, file] of Object.entries(paths)) if (!isProtocolFile(file)) throw new Error(`归档 Change Pack ${id} 缺少固定文件：${path.basename(file)}`);
-  const change = parseYaml(paths.change, [], "CHANGE_YAML_INVALID");
-  const approval = readApproval(paths.approval);
-  const completion = approval.completion.at(-1) ?? null;
-  if (!completion) throw new Error(`归档 Change Pack ${id} 没有完成批准记录。`);
-  const verification = parseVerification(readText(paths.verification));
-  const resolvedRef = gitRef(workspace.root, ref);
-  if (!resolvedRef) throw new Error(`无法解析 Git 引用：${ref}`);
-  const baseCommit = change?.baseCommit ?? null;
-  const bounded = baseCommit && isAncestor(workspace.root, baseCommit, resolvedRef);
-  const searchRange = bounded ? `${baseCommit}..${resolvedRef}` : resolvedRef;
-  const index = patchIdIndex(workspace.root, searchRange) ?? new Map();
-  const recorded = completion.implementationPatchId ?? null;
-  const matches = recorded ? index.get(recorded) ?? [] : [];
-  return {
-    id,
-    archivedPath: relativePosix(workspace.root, root),
-    ref,
-    resolvedRef,
-    completion: {
-      reviewer: completion.reviewer,
-      recordedAt: completion.recordedAt,
-      implementationCommit: completion.implementationCommit,
-      implementationCommitReachable: isAncestor(workspace.root, completion.implementationCommit, resolvedRef),
-      reviewedImplementationCommit: completion.reviewedImplementationCommit,
-      reviewedImplementationCommitReachable: isAncestor(workspace.root, completion.reviewedImplementationCommit, resolvedRef),
-      implementationPatchId: recorded
-    },
-    verification: { implementationPatchId: verification.implementationPatchId ?? null },
-    contentIdentity: {
-      recorded,
-      searchRange,
-      searchedCommits: [...index.values()].reduce((total, list) => total + list.length, 0),
-      matchedCommit: matches[0] ?? null,
-      matched: matches.length > 0
-    }
   };
 }
 
@@ -275,13 +199,9 @@ export function archiveChange(cwd, id) {
   const pack = readPack(workspace, id);
   const status = statusForPack(workspace, pack);
   if (status.completionApproval.state !== "current") throw new Error("只有当前有效的 completion approval 才能归档。");
-  const allowed = new Set([relativePosix(workspace.root, pack.paths.approval)]);
-  const unrelated = changedPaths(workspace.root).filter((file) => !allowed.has(file));
-  if (unrelated.length > 0) throw new Error(`归档前只允许 approval.yaml 成为工作区变化；请先处理：${unrelated.join("、")}`);
-  if (workspace.head !== status.completionApproval.implementationCommit) throw new Error("HEAD 已偏离完成批准绑定的实现 commit，必须重新验收。");
   const date = status.completionApproval.recordedAt.slice(0, 10);
-  fs.mkdirSync(workspace.archiveRoot, { recursive: true });
   const target = path.join(workspace.archiveRoot, `${date}-${id}`);
+  fs.mkdirSync(workspace.archiveRoot, { recursive: true });
   assertNoSymlinkPath(workspace.changesRoot, workspace.archiveRoot, "Change Pack archive 目录");
   if (fs.existsSync(target)) throw new Error(`归档目标已存在：${relativePosix(workspace.root, target)}`);
   fs.renameSync(pack.root, target);
@@ -291,48 +211,31 @@ export function archiveChange(cwd, id) {
 function recordDesignApproval(workspace, pack, reviewer) {
   const validation = validatePack(workspace, pack, { plantUml: true, gate: "design" });
   if (validation.diagnostics.some(isError)) throw operationError("尚不满足设计批准的机械前置条件。", validation.diagnostics);
-  const allowed = allowedDesignPaths(workspace, pack);
-  const unrelated = changedPaths(workspace.root).filter((file) => !allowed.has(file));
-  if (unrelated.length > 0) throw new Error(`设计批准只允许当前 Change Pack、项目原则和声明的图成为工作区变化；请先处理：${unrelated.join("、")}`);
   const design = designDigest(workspace, pack);
   const approval = readApproval(pack.paths.approval);
-  const existing = approval.design.at(-1);
-  if (existing?.digest === design.digest) throw new Error("当前设计摘要已经记录过批准，无需重复记录。");
-  const record = { reviewer, recordedAt: new Date().toISOString(), digest: design.digest, baseCommit: pack.change.baseCommit, artifacts: design.artifacts };
+  if (approval.design.at(-1)?.digest === design.digest) throw new Error("当前设计摘要已经记录过批准，无需重复记录。");
+  const record = { reviewer, recordedAt: new Date().toISOString(), digest: design.digest, baselineDigest: pack.change.baselineDigest, artifacts: design.artifacts };
   approval.design.push(record);
   atomicWrite(pack.paths.approval, stringifyYaml(approval, { lineWidth: 0 }));
   return { id: pack.id, stage: "design", reviewer, digest: design.digest, recordedAt: record.recordedAt };
 }
 
 function recordCompletionApproval(workspace, pack, reviewer) {
-  requireCleanWorktree(workspace.root, "记录完成批准前，任务与验证证据必须已提交且工作区干净。");
   const status = statusForPack(workspace, pack);
   if (status.designApproval.state !== "current") throw new Error("当前设计批准缺失或已失效。");
-  const modelCommit = findModelCommit(workspace, pack, status.designApproval.digest);
-  if (!modelCommit || !isAncestor(workspace.root, modelCommit, workspace.head)) throw new Error("当前设计批准尚未形成可追溯的 model-only commit。");
   const completionDiagnostics = validatePack(workspace, pack, { plantUml: true, gate: "completion" }).diagnostics;
   if (completionDiagnostics.some(isError)) throw operationError("尚不满足完成批准的机械前置条件。", completionDiagnostics);
   const verification = parseVerification(pack.text.verification);
   if (verification.designDigest !== status.designApproval.digest) throw new Error("verification.md 绑定的 design digest 不是当前批准摘要。");
-  const reviewedImplementationCommit = gitRef(workspace.root, verification.implementationCommit ?? "");
-  if (!reviewedImplementationCommit || reviewedImplementationCommit !== verification.implementationCommit || !isAncestor(workspace.root, reviewedImplementationCommit, workspace.head)) {
-    throw new Error("verification.md 必须绑定当前 HEAD 的一个有效实现祖先 commit。");
-  }
-  const reviewedPatchId = gitPatchId(workspace.root, reviewedImplementationCommit);
-  if (!reviewedPatchId) throw new Error("无法计算被审查实现提交的实现内容标识。");
-  if (verification.implementationPatchId !== reviewedPatchId) throw new Error("verification.md 的 implementation-patch-id 与被审查实现提交不一致。");
-  const evidenceOnly = new Set([pack.relative.tasks, pack.relative.verification]);
-  const postImplementationChanges = changedFilesBetween(workspace.root, reviewedImplementationCommit, workspace.head).map((item) => item.path).filter((file) => !evidenceOnly.has(file));
-  if (postImplementationChanges.length > 0) throw new Error(`实现 commit 之后只允许提交 tasks.md 和 verification.md 证据；发现：${postImplementationChanges.join("、")}`);
-  const tasksSha256 = sha256(fs.readFileSync(pack.paths.tasks));
-  const verificationSha256 = sha256(fs.readFileSync(pack.paths.verification));
-  const digest = completionDigest({ designDigest: status.designApproval.digest, implementationCommit: workspace.head, tasksSha256, verificationSha256 });
+  const tasksSha256 = requiredFileSha(pack.paths.tasks);
+  const verificationSha256 = requiredFileSha(pack.paths.verification);
+  const digest = completionDigest({ designDigest: status.designApproval.digest, tasksSha256, verificationSha256 });
   const approval = readApproval(pack.paths.approval);
-  if (approval.completion.at(-1)?.digest === digest) throw new Error("当前完成摘要已经记录过批准，无需重复记录。");
-  const record = { reviewer, recordedAt: new Date().toISOString(), digest, designDigest: status.designApproval.digest, implementationCommit: workspace.head, reviewedImplementationCommit, implementationPatchId: reviewedPatchId, tasksSha256, verificationSha256 };
+  if (approval.completion.at(-1)?.digest === digest) throw new Error("当前完成证据已经记录过批准，无需重复记录。");
+  const record = { reviewer, recordedAt: new Date().toISOString(), digest, designDigest: status.designApproval.digest, tasksSha256, verificationSha256 };
   approval.completion.push(record);
   atomicWrite(pack.paths.approval, stringifyYaml(approval, { lineWidth: 0 }));
-  return { id: pack.id, stage: "completion", reviewer, digest, implementationCommit: workspace.head, recordedAt: record.recordedAt };
+  return { id: pack.id, stage: "completion", reviewer, digest, designDigest: record.designDigest, recordedAt: record.recordedAt };
 }
 
 function validatePack(workspace, pack, options = {}) {
@@ -340,61 +243,27 @@ function validatePack(workspace, pack, options = {}) {
   validateManifest(workspace, pack, diagnostics);
   diagnostics.push(...validateApprovalValue(pack.approval, pack.relative.approval));
   validateMarkdown(pack, diagnostics, options.gate);
-  const rawBaseline = baselineFreshness(workspace, pack);
   const promoted = isPackPromoted(pack);
-  const baseline = promoted && rawBaseline.state === "stale"
-    ? { ...rawBaseline, state: "current", modelApplied: true, message: "候选模型已经提升；baseCommit 保留为设计追溯事实。" }
-    : { ...rawBaseline, modelApplied: promoted };
+  const baseline = baselineFreshness(workspace, pack, promoted);
   if (baseline.state === "stale") diagnostics.push(diag("MODEL_BASELINE_STALE", pack.relative.change, baseline.message));
-  validateDeclaredWorktreeDiagrams(workspace, diagnostics);
-  const records = [];
-  if (pack.change?.diagrams) {
-    for (const item of pack.change.diagrams) {
-      if (!item || typeof item.path !== "string" || !OPERATIONS.has(item.operation)) continue;
-      if (item.operation === "delete") continue;
-      const current = candidatePath(pack, item);
-      const promoted = path.join(workspace.root, item.path);
-      const source = fs.existsSync(current) ? current : promoted;
-      if (fs.existsSync(source) && !fs.lstatSync(source).isSymbolicLink() && fs.statSync(source).isFile()) records.push({ path: item.path, content: fs.readFileSync(source) });
-    }
-  }
+  const records = candidateDiagramRecords(pack);
   const diagramValidation = validateDiagramRecordsWithFacts(workspace.root, records, { syntax: options.plantUml === true && !diagnostics.some(isError) });
-  const source = diagramValidation.facts;
   if (!diagnostics.some(isError)) diagnostics.push(...diagramValidation.diagnostics);
-  let svg = { checked: options.svg !== false, valid: null, files: [] };
-  if (options.svg !== false && !diagnostics.some(isError)) {
-    const canonicalRecords = discoverDiagrams(workspace.diagramsRoot).map((file) => ({
-      path: relativePosix(workspace.root, file),
-      content: fs.readFileSync(file),
-      file,
-      svgFile: canonicalSvgPath(workspace, relativePosix(workspace.root, file))
-    }));
-    const canonicalMirror = validateSvgMirror(workspace.root, canonicalRecords, {
-      renderedRoot: path.join(workspace.root, RENDERED_RELATIVE_PATH),
-      fullMirror: true,
-      inspectPolicy: false
-    });
-    diagnostics.push(...canonicalMirror.diagnostics);
-    const candidateRecords = records.filter((record) => {
-      const item = pack.change.diagrams.find((entry) => entry.path === record.path);
-      return item && fs.existsSync(candidatePath(pack, item));
-    }).map((record) => ({
+
+  let svg = { checked: false, valid: null, files: [] };
+  if (!diagnostics.some(isError) && (options.gate === "design" || fs.existsSync(pack.renderedRoot))) {
+    const candidateMirror = validateSvgMirror(workspace.root, records.map((record) => ({
       ...record,
-      svgFile: candidateSvgPath(pack, pack.change.diagrams.find((entry) => entry.path === record.path))
-    }));
-    const candidateMirror = validateSvgMirror(workspace.root, candidateRecords, { renderedRoot: pack.renderedRoot, fullMirror: true, inspectPolicy: false });
-    diagnostics.push(...candidateMirror.diagnostics);
-    svg = {
-      checked: true,
-      valid: ![...canonicalMirror.diagnostics, ...candidateMirror.diagnostics].some(isError),
-      files: [...canonicalMirror.facts, ...candidateMirror.facts].sort((a, b) => a.path.localeCompare(b.path, "en"))
-    };
+      svgFile: candidateSvgPath(pack, { path: record.path })
+    })), { renderedRoot: pack.renderedRoot, fullMirror: true, inspectPolicy: false });
+    if (options.gate === "design") diagnostics.push(...candidateMirror.diagnostics);
+    svg = { checked: true, valid: !candidateMirror.diagnostics.some(isError), files: candidateMirror.facts };
   }
   return {
-    artifacts: { present: PACK_FILES.filter((file) => fs.existsSync(path.join(pack.root, file))).length, required: PACK_FILES.length },
+    artifacts: { present: PACK_FILES.filter((file) => isRealFile(path.join(pack.root, file))).length, required: PACK_FILES.length },
     plantUml: { checked: options.plantUml === true, valid: options.plantUml === true ? !diagnostics.some(isError) : null },
     baseline,
-    source,
+    source: diagramValidation.facts,
     svg,
     openQuestions: parseOpenQuestions(pack.text.proposal),
     tasks: taskSummary(parseTasks(pack.text.tasks)),
@@ -408,10 +277,11 @@ function validateManifest(workspace, pack, diagnostics) {
   const change = pack.change;
   if (!change || typeof change !== "object" || Array.isArray(change)) return;
   rejectUnknownKeys(change, CHANGE_KEYS, pack.relative.change, diagnostics);
-  if (change.schemaVersion !== SCHEMA_VERSION) diagnostics.push(diag("CHANGE_SCHEMA_VERSION", pack.relative.change, "change.yaml schemaVersion 必须为 1。"));
+  if (change.schemaVersion !== SCHEMA_VERSION) diagnostics.push(diag("CHANGE_SCHEMA_VERSION", pack.relative.change, `change.yaml schemaVersion 必须为 ${SCHEMA_VERSION}。`));
   if (change.workflowProtocol !== WORKFLOW_PROTOCOL) diagnostics.push(diag("CHANGE_WORKFLOW_PROTOCOL", pack.relative.change, `change.yaml workflowProtocol 必须为 ${WORKFLOW_PROTOCOL}。`));
   if (change.id !== pack.id || !validChangeId(change.id)) diagnostics.push(diag("CHANGE_ID_INVALID", pack.relative.change, "change.yaml id 必须与目录名一致，并使用最长 64 字符的小写 kebab-case。"));
-  if (typeof change.baseCommit !== "string" || !FULL_COMMIT.test(change.baseCommit) || gitRef(workspace.root, change.baseCommit) !== change.baseCommit) diagnostics.push(diag("BASE_COMMIT_INVALID", pack.relative.change, "baseCommit 必须是仓库中存在的完整 commit。"));
+  if (!SHA256.test(change.baselineDigest ?? "")) diagnostics.push(diag("BASELINE_DIGEST_INVALID", pack.relative.change, "baselineDigest 必须是 SHA-256。"));
+  if (!validArtifactList(change.baselineArtifacts)) diagnostics.push(diag("BASELINE_ARTIFACTS_INVALID", pack.relative.change, "baselineArtifacts 必须按路径排序并包含普通文件路径与 SHA-256。"));
   if (typeof change.createdAt !== "string" || Number.isNaN(Date.parse(change.createdAt)) || new Date(change.createdAt).toISOString() !== change.createdAt) diagnostics.push(diag("CREATED_AT_INVALID", pack.relative.change, "createdAt 必须是 UTC ISO-8601 时间。"));
   if (!Array.isArray(change.diagrams) || change.diagrams.length === 0) {
     diagnostics.push(diag("DIAGRAMS_REQUIRED", pack.relative.change, "每个 Change Pack 至少声明一张 PlantUML 图。"));
@@ -426,53 +296,26 @@ function validateManifest(workspace, pack, diagnostics) {
     if (!OPERATIONS.has(item.operation)) diagnostics.push(diag("DIAGRAM_OPERATION_INVALID", file, "operation 必须为 add、modify 或 delete。"));
     if (seen.has(item.path)) diagnostics.push(diag("DIAGRAM_DUPLICATE", file, `重复声明图路径：${item.path}`));
     seen.add(item.path);
-    if (!validDiagramPath(item.path) || !OPERATIONS.has(item.operation) || !FULL_COMMIT.test(change.baseCommit ?? "")) return;
-    validateDiagramOperation(workspace, pack, change.baseCommit, item, file, diagnostics);
+    if (!validDiagramPath(item.path) || !OPERATIONS.has(item.operation)) return;
+    validateDiagramOperation(workspace, pack, item, file, diagnostics);
   });
 }
 
-function validateDiagramOperation(workspace, pack, baseCommit, item, file, diagnostics) {
-  const base = gitShow(workspace.root, baseCommit, item.path);
+function validateDiagramOperation(workspace, pack, item, file, diagnostics) {
   const overlayPath = candidatePath(pack, item);
-  let overlayExists = fs.existsSync(overlayPath) && fs.statSync(overlayPath).isFile();
+  let overlayExists = isRealFile(overlayPath);
   if (overlayExists) {
     try { assertNoSymlinkPath(pack.diagramsRoot, overlayPath, item.path); }
-    catch (error) {
-      diagnostics.push(diag("DIAGRAM_SYMLINK", file, error.message));
-      overlayExists = false;
-    }
+    catch (error) { diagnostics.push(diag("DIAGRAM_SYMLINK", file, error.message)); overlayExists = false; }
   }
   const overlay = overlayExists ? fs.readFileSync(overlayPath) : null;
-  const canonicalPath = path.join(workspace.root, item.path);
-  const canonical = fs.existsSync(canonicalPath) && fs.statSync(canonicalPath).isFile() ? fs.readFileSync(canonicalPath) : null;
+  const canonical = canonicalBytes(workspace, item.path);
   const promoted = !overlayExists && approvalBindsCandidate(pack, item, canonical);
-  const correct = item.operation === "add" ? !base && ((!!overlay && !canonical) || (promoted && !!canonical))
-    : item.operation === "modify" ? !!base && ((!!overlay && !base.equals(overlay) && !!canonical && base.equals(canonical)) || (promoted && !!canonical && !base.equals(canonical)))
-      : !!base && !overlay && ((!!canonical && base.equals(canonical)) || (promoted && !canonical));
-  if (!correct) diagnostics.push(diag("DIAGRAM_OPERATION_MISMATCH", file, `${item.operation} 与 baseCommit、候选 overlay 和已批准模型的文件事实不一致：${item.path}`));
-}
-
-function validateDeclaredWorktreeDiagrams(workspace, diagnostics) {
-  for (const file of changedPaths(workspace.root)) {
-    if (!file.startsWith(`${DIAGRAMS_RELATIVE_PATH}/`) || !file.endsWith(".puml")) continue;
-    if (isApprovedCanonicalChange(workspace, file)) continue;
-    diagnostics.push(diag("UNAPPROVED_CANONICAL_DIAGRAM_CHANGE", file, "顶层 diagrams 只保存已批准模型；未批准候选必须位于 Change Pack 的 diagrams overlay。"));
-  }
-}
-
-function isApprovedCanonicalChange(workspace, canonicalPath) {
-  for (const id of listActiveChangeIds(workspace)) {
-    let pack;
-    try { pack = readPack(workspace, id); } catch { continue; }
-    const item = pack.change?.diagrams?.find((entry) => entry?.path === canonicalPath);
-    if (!item) continue;
-    const record = pack.approval?.design?.at(-1);
-    if (!record || record.digest !== designDigest(workspace, pack).digest) continue;
-    const target = path.join(workspace.root, canonicalPath);
-    const bytes = fs.existsSync(target) && fs.statSync(target).isFile() ? fs.readFileSync(target) : null;
-    if (approvalBindsCandidate(pack, item, bytes)) return true;
-  }
-  return false;
+  const correct = item.operation === "add" ? ((!!overlay && !canonical) || (promoted && !!canonical))
+    : item.operation === "modify" ? ((!!overlay && !!canonical && !canonical.equals(overlay)) || (promoted && !!canonical))
+      : item.operation === "delete" ? ((!overlay && !!canonical) || (promoted && !canonical))
+        : false;
+  if (!correct) diagnostics.push(diag("DIAGRAM_OPERATION_MISMATCH", file, `${item.operation} 与 canonical、候选 overlay 和已批准内容摘要不一致：${item.path}`));
 }
 
 function validateMarkdown(pack, diagnostics, gate) {
@@ -516,37 +359,27 @@ function validateMarkdown(pack, diagnostics, gate) {
     for (const criterion of criteria) if (byId.get(criterion) !== "PASS") diagnostics.push(diag("AC_NOT_PASS", pack.relative.verification, `${criterion} 必须具有 PASS 验证结果。`));
     if (verification.semanticReview !== "pass") diagnostics.push(diag("SEMANTIC_REVIEW_NOT_PASS", pack.relative.verification, "AI semantic review 必须显式声明为 pass。"));
     if (pack.text.verification.includes("[TODO")) diagnostics.push(diag("PLACEHOLDER_REMAINING", pack.relative.verification, "完成批准前必须清除 verification.md 中的 [TODO]。"));
-    if (!verification.implementationPatchId || verification.implementationPatchId === "pending") diagnostics.push(diag("IMPLEMENTATION_PATCH_ID_REQUIRED", pack.relative.verification, "完成批准前 verification.md 必须声明被审查实现提交的 implementation-patch-id。"));
   }
 }
 
 function statusForPack(workspace, pack) {
   const validation = validatePack(workspace, pack, { plantUml: false });
   const design = pack.change ? designDigest(workspace, pack) : { digest: null };
-  const legacyDesign = pack.change ? legacyDesignDigest(workspace, pack) : { digest: null };
   const approval = safeApproval(pack);
   const designRecord = approval.design.at(-1) ?? null;
   const modelApplied = isPackPromoted(pack);
-  const matchingDigest = designRecord?.digest === design.digest ? design.digest : designRecord?.digest === legacyDesign.digest ? legacyDesign.digest : null;
-  const designState = !designRecord ? "missing" : matchingDigest && (validation.baseline.state === "current" || modelApplied) ? "current" : "stale";
-  const modelCommit = designState === "current" && modelApplied ? findModelCommit(workspace, pack, matchingDigest) : null;
+  const matchingDigest = designRecord?.digest === design.digest ? design.digest : null;
+  const designState = !designRecord ? "missing" : matchingDigest && validation.baseline.state === "current" ? "current" : "stale";
   const tasks = parseTasks(pack.text.tasks);
   const verification = parseVerification(pack.text.verification);
   const completionRecord = approval.completion.at(-1) ?? null;
-  const tasksSha256 = fileShaOrNull(pack.paths.tasks);
-  const verificationSha256 = fileShaOrNull(pack.paths.verification);
   const currentCompletionDigest = designState === "current"
-    ? completionDigest({ designDigest: matchingDigest, implementationCommit: workspace.head, tasksSha256, verificationSha256 })
+    ? completionDigest({ designDigest: matchingDigest, tasksSha256: fileShaOrNull(pack.paths.tasks), verificationSha256: fileShaOrNull(pack.paths.verification) })
     : null;
   const completionState = !completionRecord ? "missing" : completionRecord.digest === currentCompletionDigest ? "current" : "stale";
-  const changed = changedPaths(workspace.root);
-  const archiveWorktreeAllowed = changed.every((file) => file === pack.relative.approval);
   return {
     id: pack.id,
-    baseCommit: pack.change?.baseCommit ?? null,
-    head: workspace.head,
-    worktree: changed.length === 0 ? "clean" : "dirty",
-    artifacts: validation.artifacts,
+    baselineDigest: pack.change?.baselineDigest ?? null,
     structurallyValid: !validation.diagnostics.some(isError),
     plantUml: validation.plantUml,
     baseline: validation.baseline,
@@ -557,9 +390,9 @@ function statusForPack(workspace, pack) {
     tasks: taskSummary(tasks),
     visualReview: validation.visualReview,
     verification: { semanticReview: verification.semanticReview, acceptance: validation.acceptance },
-    designApproval: { state: designState, digest: matchingDigest ?? design.digest, reviewer: designRecord?.reviewer ?? null, recordedAt: designRecord?.recordedAt ?? null, modelApplied, modelCommit },
-    completionApproval: { state: completionState, digest: completionRecord?.digest ?? null, reviewer: completionRecord?.reviewer ?? null, recordedAt: completionRecord?.recordedAt ?? null, implementationCommit: completionRecord?.implementationCommit ?? null },
-    archiveEligible: completionState === "current" && workspace.head === completionRecord?.implementationCommit && archiveWorktreeAllowed
+    designApproval: { state: designState, digest: matchingDigest ?? design.digest, reviewer: designRecord?.reviewer ?? null, recordedAt: designRecord?.recordedAt ?? null, baselineDigest: designRecord?.baselineDigest ?? null, modelApplied },
+    completionApproval: { state: completionState, digest: completionRecord?.digest ?? null, reviewer: completionRecord?.reviewer ?? null, recordedAt: completionRecord?.recordedAt ?? null },
+    archiveEligible: completionState === "current"
   };
 }
 
@@ -586,15 +419,13 @@ function readPack(workspace, id) {
   }
   for (const file of PACK_FILES) {
     const target = path.join(root, file);
-    if (!fs.existsSync(target) || fs.lstatSync(target).isSymbolicLink() || !fs.statSync(target).isFile()) diagnostics.push(diag("ARTIFACT_REQUIRED", relativePosix(workspace.root, target), `缺少固定 Change Pack 文件：${file}`));
+    if (!isRealFile(target)) diagnostics.push(diag("ARTIFACT_REQUIRED", relativePosix(workspace.root, target), `缺少固定 Change Pack 文件：${file}`));
   }
   let change = null;
-  if (isProtocolFile(paths.change)) change = parseYaml(paths.change, diagnostics, "CHANGE_YAML_INVALID");
+  if (isRealFile(paths.change)) change = parseYaml(paths.change, diagnostics, "CHANGE_YAML_INVALID");
   let approval = null;
-  if (isProtocolFile(paths.approval)) approval = parseYaml(paths.approval, diagnostics, "APPROVAL_YAML_INVALID");
-  const text = {
-    proposal: readText(paths.proposal), decisions: readText(paths.decisions), tasks: readText(paths.tasks), verification: readText(paths.verification)
-  };
+  if (isRealFile(paths.approval)) approval = parseYaml(paths.approval, diagnostics, "APPROVAL_YAML_INVALID");
+  const text = { proposal: readText(paths.proposal), decisions: readText(paths.decisions), tasks: readText(paths.tasks), verification: readText(paths.verification) };
   const declared = new Set((change?.diagrams ?? []).filter((item) => validDiagramPath(item?.path) && item.operation !== "delete").map((item) => diagramRelative(item.path)));
   if (fs.existsSync(diagramsRoot)) {
     for (const file of discoverTreeFiles(diagramsRoot)) {
@@ -606,7 +437,7 @@ function readPack(workspace, id) {
     for (const file of discoverTreeFiles(renderedRoot)) {
       const relativeSvg = relativePosix(renderedRoot, file);
       const sourceRelative = relativeSvg.replace(/\.svg$/i, ".puml");
-      if (!declared.has(sourceRelative)) diagnostics.push(diag("SVG_ORPHAN", relativePosix(workspace.root, file), "Change Pack 标准 SVG 没有对应的已声明 add/modify 候选。"));
+      if (!declared.has(sourceRelative)) diagnostics.push(diag("SVG_ORPHAN", relativePosix(workspace.root, file), "Change Pack 审查 SVG 没有对应的已声明 add/modify 候选。"));
     }
   }
   return { id, root, diagramsRoot, renderedRoot, workspace, paths, relative, diagnostics, change, approval, text };
@@ -624,56 +455,78 @@ function parseYaml(file, diagnostics, code) {
 }
 
 function safeApproval(pack) {
-  return safeApprovalFile(pack.paths.approval);
+  if (pack.approval && Array.isArray(pack.approval.design) && Array.isArray(pack.approval.completion)) return pack.approval;
+  return emptyApproval();
 }
 
 function designDigest(workspace, pack) {
-  return designDigestWithOptions(workspace, pack, { includeSvg: true });
-}
-
-function legacyDesignDigest(workspace, pack) {
-  return designDigestWithOptions(workspace, pack, { includeSvg: false });
-}
-
-function designDigestWithOptions(workspace, pack, { includeSvg }) {
-  const artifacts = [PRINCIPLES_RELATIVE_PATH, pack.relative.change, pack.relative.proposal, pack.relative.decisions].map((artifactPath) => ({
-    path: artifactPath,
-    sha256: fileShaOrNull(path.join(workspace.root, artifactPath))
-  }));
+  const artifacts = [PRINCIPLES_RELATIVE_PATH, pack.relative.change, pack.relative.proposal, pack.relative.decisions]
+    .map((artifactPath) => artifactRecord(workspace.root, artifactPath));
   for (const item of pack.change?.diagrams ?? []) {
     if (!validDiagramPath(item?.path)) continue;
     const bytes = candidateBytes(pack, item);
     artifacts.push({ path: item.path, sha256: bytes ? sha256(bytes) : null });
-    if (includeSvg) {
-      const svgPath = canonicalSvgRelative(item.path);
-      const svg = candidateSvgBytes(pack, item);
-      artifacts.push({ path: svgPath, sha256: svg ? sha256(svg) : null });
-    }
   }
-  return designDigestFromArtifacts(pack.change?.baseCommit ?? null, artifacts);
+  return designDigestFromArtifacts(pack.change?.baselineDigest ?? null, artifacts);
 }
 
-function findModelCommit(workspace, pack, designDigestValue) {
-  const commit = findApprovalCommit(workspace.root, pack.relative.approval, designDigestValue, allowedDesignPaths(workspace, pack));
-  if (!commit) return null;
-  const record = pack.approval?.design?.findLast((item) => item?.digest === designDigestValue);
-  if (!record?.artifacts?.every((artifact) => {
-    const bytes = gitShow(workspace.root, commit, artifact.path);
-    return artifact.sha256 === (bytes ? sha256(bytes) : null);
-  })) return null;
-  return commit;
+function baselineSnapshot(workspace) {
+  const paths = [PRINCIPLES_RELATIVE_PATH, ...discoverDiagrams(workspace.diagramsRoot).map((file) => relativePosix(workspace.root, file))].sort((a, b) => a.localeCompare(b, "en"));
+  const artifacts = paths.map((file) => artifactRecord(workspace.root, file));
+  const digest = sha256(`${stableJson({ workflowProtocol: WORKFLOW_PROTOCOL, kind: "baseline", artifacts })}\n`);
+  return { digest, artifacts };
 }
 
-function allowedDesignPaths(workspace, pack) {
-  const allowed = new Set([PRINCIPLES_RELATIVE_PATH, `${DIAGRAMS_RELATIVE_PATH}/.gitkeep`, `${RENDERED_RELATIVE_PATH}/.gitkeep`]);
-  for (const file of PACK_FILES) allowed.add(relativePosix(workspace.root, path.join(pack.root, file)));
-  for (const item of pack.change?.diagrams ?? []) if (validDiagramPath(item?.path)) {
-    allowed.add(item.path);
-    allowed.add(relativePosix(workspace.root, candidatePath(pack, item)));
-    allowed.add(canonicalSvgRelative(item.path));
-    allowed.add(relativePosix(workspace.root, candidateSvgPath(pack, item)));
+function baselineFreshness(workspace, pack, promoted) {
+  if (!SHA256.test(pack.change?.baselineDigest ?? "") || !validArtifactList(pack.change?.baselineArtifacts)) {
+    return { state: "invalid", digest: null, recordedDigest: pack.change?.baselineDigest ?? null, changedPaths: [], modelApplied: promoted, message: "baselineDigest 或 baselineArtifacts 无效，无法判断模型基线 freshness。" };
   }
-  return allowed;
+  const current = baselineSnapshot(workspace);
+  const changedPaths = compareArtifacts(pack.change.baselineArtifacts, current.artifacts);
+  const declared = new Set((pack.change.diagrams ?? []).map((item) => item?.path));
+  const externalChanges = changedPaths.filter((file) => !declared.has(file));
+  const expectedState = current.digest === pack.change.baselineDigest ? "current" : promoted && externalChanges.length === 0 ? "current" : "stale";
+  return {
+    state: expectedState,
+    digest: current.digest,
+    recordedDigest: pack.change.baselineDigest,
+    changedPaths,
+    modelApplied: promoted,
+    message: expectedState === "current"
+      ? promoted ? "候选模型已按当前设计批准提升，基线变化仅限本 Change Pack 声明的图。" : "模型基线与当前 principles 和 canonical .puml 一致。"
+      : `已批准模型基线发生变化：${externalChanges.join("、") || changedPaths.join("、")}。请运行 change refresh-baseline，并重新审查设计。`
+  };
+}
+
+function compareArtifacts(previous, current) {
+  const before = new Map((previous ?? []).map((item) => [item.path, item.sha256]));
+  const after = new Map((current ?? []).map((item) => [item.path, item.sha256]));
+  return [...new Set([...before.keys(), ...after.keys()])].filter((file) => before.get(file) !== after.get(file)).sort((a, b) => a.localeCompare(b, "en"));
+}
+
+function validArtifactList(value) {
+  if (!Array.isArray(value)) return false;
+  const paths = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item) || typeof item.path !== "string" || !SHA256.test(item.sha256 ?? "")) return false;
+    paths.push(item.path);
+  }
+  return paths.every((file, index) => index === 0 || paths[index - 1].localeCompare(file, "en") < 0);
+}
+
+function artifactRecord(root, relative) {
+  const bytes = canonicalBytes({ root }, relative);
+  return { path: relative, sha256: bytes ? sha256(bytes) : null };
+}
+
+function candidateDiagramRecords(pack) {
+  const records = [];
+  for (const item of pack.change?.diagrams ?? []) {
+    if (!item || !OPERATIONS.has(item.operation) || item.operation === "delete") continue;
+    const bytes = candidateBytes(pack, item);
+    if (bytes) records.push({ path: item.path, content: bytes, file: candidatePath(pack, item) });
+  }
+  return records.sort((a, b) => a.path.localeCompare(b.path, "en"));
 }
 
 function listActiveChangeIds(workspace) {
@@ -691,38 +544,16 @@ function listActiveChangeIds(workspace) {
 function requireSingleActiveChange(workspace, expectedId = null) {
   const ids = listActiveChangeIds(workspace);
   if (ids.length > 1) {
-    const issue = diagnostic("error", "MULTIPLE_ACTIVE_CHANGES", CHANGES_RELATIVE_PATH, null, `当前 worktree 存在多个活动 Change Pack：${ids.join("、")}。请将并行变更拆分到独立 branch/worktree。`);
-    throw operationError("每个 Git worktree 最多只能有一个活动 Change Pack。", [issue]);
+    const issue = diagnostic("error", "MULTIPLE_ACTIVE_CHANGES", CHANGES_RELATIVE_PATH, null, `当前工作区存在多个活动 Change Pack：${ids.join("、")}。并行变更请使用独立工作区。`);
+    throw operationError("每个工作区最多只能有一个活动 Change Pack。", [issue]);
   }
-  if (expectedId && ids.length === 1 && ids[0] !== expectedId) throw new Error(`当前 worktree 的活动 Change Pack 是 ${ids[0]}，不是 ${expectedId}。`);
+  if (expectedId && ids.length === 1 && ids[0] !== expectedId) throw new Error(`当前工作区的活动 Change Pack 是 ${ids[0]}，不是 ${expectedId}。`);
   return ids[0] ?? null;
 }
 
-function baselineFreshness(workspace, pack) {
-  const baseCommit = pack.change?.baseCommit;
-  if (!FULL_COMMIT.test(baseCommit ?? "") || gitRef(workspace.root, baseCommit) !== baseCommit) {
-    return { state: "invalid", baseCommit: baseCommit ?? null, head: workspace.head, changedPaths: [], message: "baseCommit 无效，无法判断模型基线 freshness。" };
-  }
-  if (!isAncestor(workspace.root, baseCommit, workspace.head)) {
-    return { state: "stale", baseCommit, head: workspace.head, changedPaths: [], message: "baseCommit 不是当前 HEAD 的祖先；请先同步目标分支，再显式刷新基线并重新审查。" };
-  }
-  const changed = changedFilesBetween(workspace.root, baseCommit, workspace.head).map((item) => item.path).filter(isBaselineModelPath);
-  return {
-    state: changed.length === 0 ? "current" : "stale",
-    baseCommit,
-    head: workspace.head,
-    changedPaths: changed,
-    message: changed.length === 0 ? "模型基线与 baseCommit 一致。" : `baseCommit 之后已批准模型基线发生变化：${changed.join("、")}。请运行 change refresh-base 并重新审查。`
-  };
-}
-
-function isBaselineModelPath(file) {
-  return file === PRINCIPLES_RELATIVE_PATH || (file.startsWith(`${DIAGRAMS_RELATIVE_PATH}/`) && file.toLowerCase().endsWith(".puml"));
-}
-
-function findArchivedChange(archiveRoot, id) {
-  if (!fs.existsSync(archiveRoot)) return null;
-  return fs.readdirSync(archiveRoot).find((name) => name === id || name.endsWith(`-${id}`)) ?? null;
+function requireNoActiveChange(workspace) {
+  const active = requireSingleActiveChange(workspace);
+  if (active) throw new Error(`当前工作区已有活动 Change Pack：${active}。并行变更请使用独立工作区。`);
 }
 
 function parseAcceptanceCriteria(source) {
@@ -765,8 +596,6 @@ function parseVerification(source) {
   return {
     semanticReview: source.match(/<!--\s*arch-lens:\s*semantic-review=(pass|concerns|fail|pending)\s*-->/i)?.[1].toLowerCase() ?? "missing",
     designDigest: source.match(/<!--\s*arch-lens:\s*design-digest=([0-9a-f]{64}|pending)\s*-->/i)?.[1] ?? null,
-    implementationCommit: source.match(/<!--\s*arch-lens:\s*implementation-commit=([0-9a-f]{40,64}|pending)\s*-->/i)?.[1] ?? null,
-    implementationPatchId: source.match(/<!--\s*arch-lens:\s*implementation-patch-id=([0-9a-f]{40,64}|pending)\s*-->/i)?.[1] ?? null,
     acceptanceResults
   };
 }
@@ -814,55 +643,37 @@ function candidateSvgPath(pack, item) {
   return path.join(pack.renderedRoot, diagramRelative(item.path).replace(/\.puml$/i, ".svg"));
 }
 
-function canonicalSvgRelative(canonicalPath) {
-  return `${RENDERED_RELATIVE_PATH}/${diagramRelative(canonicalPath).replace(/\.puml$/i, ".svg")}`;
-}
-
-function canonicalSvgPath(workspace, canonicalPath) {
-  return path.join(workspace.root, canonicalSvgRelative(canonicalPath));
+function canonicalBytes(workspace, canonicalPath) {
+  const target = path.join(workspace.root, canonicalPath);
+  return isRealFile(target) ? fs.readFileSync(target) : null;
 }
 
 function candidateBytes(pack, item) {
-  if (item.operation === "delete") return null;
+  if (!item || item.operation === "delete" || !validDiagramPath(item.path)) return null;
   const overlay = candidatePath(pack, item);
-  if (fs.existsSync(overlay) && !fs.lstatSync(overlay).isSymbolicLink() && fs.statSync(overlay).isFile()) return fs.readFileSync(overlay);
-  const canonical = path.join(pack.workspace.root, item.path);
-  if (fs.existsSync(canonical) && !fs.lstatSync(canonical).isSymbolicLink() && fs.statSync(canonical).isFile()) return fs.readFileSync(canonical);
-  return null;
-}
-
-function candidateSvgBytes(pack, item) {
-  if (item.operation === "delete") return null;
-  const overlay = candidateSvgPath(pack, item);
-  if (fs.existsSync(overlay) && !fs.lstatSync(overlay).isSymbolicLink() && fs.statSync(overlay).isFile()) return fs.readFileSync(overlay);
-  const canonical = canonicalSvgPath(pack.workspace, item.path);
-  if (fs.existsSync(canonical) && !fs.lstatSync(canonical).isSymbolicLink() && fs.statSync(canonical).isFile()) return fs.readFileSync(canonical);
-  return null;
+  if (isRealFile(overlay)) return fs.readFileSync(overlay);
+  return canonicalBytes(pack.workspace, item.path);
 }
 
 function approvalBindsCandidate(pack, item, canonical) {
-  const record = pack.approval?.design?.at(-1);
-  if (!record?.artifacts) return false;
-  const artifact = record.artifacts.find((entry) => entry?.path === item.path);
+  const record = safeApproval(pack).design.at(-1);
+  const artifact = record?.artifacts?.find((entry) => entry?.path === item.path);
   return !!artifact && artifact.sha256 === (canonical ? sha256(canonical) : null);
 }
 
-function approvalBindsCandidateSvg(pack, item, canonical) {
-  const record = pack.approval?.design?.at(-1);
-  if (!record?.artifacts) return false;
-  const artifact = record.artifacts.find((entry) => entry?.path === canonicalSvgRelative(item.path));
-  if (!artifact) return !record.artifacts.some((entry) => entry?.path?.startsWith(`${RENDERED_RELATIVE_PATH}/`));
-  return artifact.sha256 === (canonical ? sha256(canonical) : null);
+function isPackPromoted(pack) {
+  const changed = pack.change?.diagrams ?? [];
+  if (changed.length === 0) return false;
+  return changed.every((item) => {
+    const canonical = canonicalBytes(pack.workspace, item.path);
+    if (item.operation === "delete") return !canonical && approvalBindsCandidate(pack, item, canonical);
+    return !!canonical && approvalBindsCandidate(pack, item, canonical);
+  });
 }
 
-function isPackPromoted(pack) {
-  return (pack.change?.diagrams ?? []).every((item) => {
-    const canonical = path.join(pack.workspace.root, item.path);
-    const bytes = fs.existsSync(canonical) && fs.statSync(canonical).isFile() ? fs.readFileSync(canonical) : null;
-    const svg = canonicalSvgPath(pack.workspace, item.path);
-    const svgBytes = fs.existsSync(svg) && fs.statSync(svg).isFile() ? fs.readFileSync(svg) : null;
-    return approvalBindsCandidate(pack, item, bytes) && approvalBindsCandidateSvg(pack, item, svgBytes);
-  });
+function findArchivedChange(archiveRoot, id) {
+  if (!fs.existsSync(archiveRoot)) return null;
+  return fs.readdirSync(archiveRoot).find((name) => name === id || name.endsWith(`-${id}`)) ?? null;
 }
 
 function validatePackTree(root, kind, relativeRoot, diagnostics) {
@@ -880,9 +691,8 @@ function discoverTreeFiles(root, diagnostics = null, relativeRoot = root) {
   const visit = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name, "en"))) {
       const target = path.join(directory, entry.name);
-      if (entry.isSymbolicLink()) {
-        diagnostics?.push(diag("ARTIFACT_SYMLINK", `${relativeRoot}/${relativePosix(root, target)}`, "Change Pack diagrams/rendered 不得包含符号链接。"));
-      } else if (entry.isDirectory()) visit(target);
+      if (entry.isSymbolicLink()) diagnostics?.push(diag("ARTIFACT_SYMLINK", `${relativeRoot}/${relativePosix(root, target)}`, "Change Pack diagrams/rendered 不得包含符号链接。"));
+      else if (entry.isDirectory()) visit(target);
       else if (entry.isFile()) files.push(target);
       else diagnostics?.push(diag("ARTIFACT_UNKNOWN", `${relativeRoot}/${relativePosix(root, target)}`, "Change Pack 不允许特殊文件。"));
     }
@@ -891,101 +701,60 @@ function discoverTreeFiles(root, diagnostics = null, relativeRoot = root) {
   return files;
 }
 
-function requireChangeCreationWorktree(workspace) {
-  const active = requireSingleActiveChange(workspace);
-  if (active) throw new Error(`当前 worktree 已有活动 Change Pack：${active}。并行变更必须使用独立 branch/worktree。`);
-  const changed = changedPaths(workspace.root);
-  if (changed.length > 0) throw new Error(`创建 Change Pack 前工作区必须干净；请先处理：${changed.join("、")}`);
-}
-
-function isActivePackPath(workspace, file) {
-  return listActiveChangeIds(workspace).some((id) => file === `${CHANGES_RELATIVE_PATH}/${id}` || file.startsWith(`${CHANGES_RELATIVE_PATH}/${id}/`));
-}
-
 function unifiedDiff(canonicalPath, base, candidate) {
   if ((base && candidate && base.equals(candidate)) || (!base && !candidate)) return "";
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "arch-lens-diff-"));
-  try {
-    const before = path.join(temporary, "before");
-    const after = path.join(temporary, "after");
-    if (base) fs.writeFileSync(before, base);
-    if (candidate) fs.writeFileSync(after, candidate);
-    const result = git(temporary, ["diff", "--no-index", "--no-ext-diff", "--no-color", "--", base ? before : "/dev/null", candidate ? after : "/dev/null"]);
-    if (![0, 1].includes(result.status)) throw new Error(`无法生成文本 diff：${canonicalPath}`);
-    return result.stdout
-      .replace(/^diff --git .*$/m, `diff --git a/${canonicalPath} b/${canonicalPath}`)
-      .replace(/^--- .*$/m, base ? `--- a/${canonicalPath}` : "--- /dev/null")
-      .replace(/^\+\+\+ .*$/m, candidate ? `+++ b/${canonicalPath}` : "+++ /dev/null");
-  } finally {
-    fs.rmSync(temporary, { recursive: true, force: true });
-  }
+  const before = base ? base.toString("utf8").replace(/\n$/, "").split("\n") : [];
+  const after = candidate ? candidate.toString("utf8").replace(/\n$/, "").split("\n") : [];
+  const lines = [
+    `diff --arch-lens a/${canonicalPath} b/${canonicalPath}`,
+    base ? `--- a/${canonicalPath}` : "--- /dev/null",
+    candidate ? `+++ b/${canonicalPath}` : "+++ /dev/null",
+    `@@ -1,${before.length} +1,${after.length} @@`,
+    ...before.map((line) => `-${line}`),
+    ...after.map((line) => `+${line}`)
+  ];
+  return `${lines.join("\n")}\n`;
 }
 
-function itemCandidateRelative(pack, relative) {
-  return relativePosix(pack.workspace.root, path.join(pack.diagramsRoot, relative));
-}
-
-function applyModelMirrorsAtomically(workspace, pack) {
-  const renderedRoot = path.join(workspace.root, RENDERED_RELATIVE_PATH);
+function applyModelAtomically(workspace, pack) {
   const parent = path.dirname(workspace.diagramsRoot);
   const nonce = `${process.pid}.${Date.now()}`;
-  const pendingDiagrams = path.join(parent, `.diagrams.${nonce}.tmp`);
-  const pendingRendered = path.join(parent, `.rendered.${nonce}.tmp`);
-  const backupDiagrams = path.join(parent, `.diagrams.${nonce}.backup`);
-  const backupRendered = path.join(parent, `.rendered.${nonce}.backup`);
-  fs.mkdirSync(pendingDiagrams);
-  fs.mkdirSync(pendingRendered);
-  let diagramsBackedUp = false;
-  let renderedBackedUp = false;
-  let diagramsInstalled = false;
-  let renderedInstalled = false;
+  const pending = path.join(parent, `.diagrams.${nonce}.tmp`);
+  const backup = path.join(parent, `.diagrams.${nonce}.backup`);
+  fs.mkdirSync(pending);
+  let backedUp = false;
+  let installed = false;
   try {
-    copyTree(workspace.diagramsRoot, pendingDiagrams);
-    copyTree(renderedRoot, pendingRendered);
+    copyTree(workspace.diagramsRoot, pending);
     for (const item of pack.change.diagrams) {
-      const relativeDiagram = diagramRelative(item.path);
-      const diagramTarget = path.join(pendingDiagrams, relativeDiagram);
-      const svgTarget = path.join(pendingRendered, relativeDiagram.replace(/\.puml$/i, ".svg"));
-      if (item.operation === "delete") {
-        fs.rmSync(diagramTarget, { force: true });
-        fs.rmSync(svgTarget, { force: true });
-      } else {
-        fs.mkdirSync(path.dirname(diagramTarget), { recursive: true });
-        fs.mkdirSync(path.dirname(svgTarget), { recursive: true });
-        fs.copyFileSync(candidatePath(pack, item), diagramTarget);
-        fs.copyFileSync(candidateSvgPath(pack, item), svgTarget);
+      const relative = diagramRelative(item.path);
+      const target = path.join(pending, relative);
+      if (item.operation === "delete") fs.rmSync(target, { force: true });
+      else {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.copyFileSync(candidatePath(pack, item), target);
       }
     }
-    pruneEmptyDirectories(pendingDiagrams);
-    pruneEmptyDirectories(pendingRendered);
-    const keepFile = path.join(pendingDiagrams, ".gitkeep");
-    const hasModelFiles = discoverTreeFiles(pendingDiagrams).some((file) => file !== keepFile);
-    if (hasModelFiles) fs.rmSync(keepFile, { force: true });
+    pruneEmptyDirectories(pending);
+    const keepFile = path.join(pending, ".gitkeep");
+    const modelFiles = discoverTreeFiles(pending).filter((file) => file !== keepFile);
+    if (modelFiles.length > 0) fs.rmSync(keepFile, { force: true });
     else if (!fs.existsSync(keepFile)) fs.writeFileSync(keepFile, "");
 
-    fs.renameSync(workspace.diagramsRoot, backupDiagrams);
-    diagramsBackedUp = true;
-    if (fs.existsSync(renderedRoot)) {
-      fs.renameSync(renderedRoot, backupRendered);
-      renderedBackedUp = true;
-    }
-    fs.renameSync(pendingDiagrams, workspace.diagramsRoot);
-    diagramsInstalled = true;
-    fs.renameSync(pendingRendered, renderedRoot);
-    renderedInstalled = true;
+    fs.renameSync(workspace.diagramsRoot, backup);
+    backedUp = true;
+    fs.renameSync(pending, workspace.diagramsRoot);
+    installed = true;
   } catch (error) {
-    if (diagramsInstalled) fs.rmSync(workspace.diagramsRoot, { recursive: true, force: true });
-    if (renderedInstalled) fs.rmSync(renderedRoot, { recursive: true, force: true });
-    if (diagramsBackedUp && fs.existsSync(backupDiagrams)) fs.renameSync(backupDiagrams, workspace.diagramsRoot);
-    if (renderedBackedUp && fs.existsSync(backupRendered)) fs.renameSync(backupRendered, renderedRoot);
-    fs.rmSync(pendingDiagrams, { recursive: true, force: true });
-    fs.rmSync(pendingRendered, { recursive: true, force: true });
+    if (installed && fs.existsSync(workspace.diagramsRoot)) fs.rmSync(workspace.diagramsRoot, { recursive: true, force: true });
+    if (backedUp && fs.existsSync(backup)) fs.renameSync(backup, workspace.diagramsRoot);
+    fs.rmSync(pending, { recursive: true, force: true });
     throw error;
   }
-  fs.rmSync(backupDiagrams, { recursive: true, force: true });
-  fs.rmSync(backupRendered, { recursive: true, force: true });
+  fs.rmSync(backup, { recursive: true, force: true });
   fs.rmSync(pack.diagramsRoot, { recursive: true, force: true });
   fs.rmSync(pack.renderedRoot, { recursive: true, force: true });
+  for (const item of pack.change.diagrams) fs.rmSync(path.join(workspace.root, RENDERED_RELATIVE_PATH, diagramRelative(item.path).replace(/\.puml$/i, ".svg")), { force: true });
 }
 
 function copyTree(source, target) {
@@ -1018,11 +787,16 @@ function validChangeId(id) {
   return typeof id === "string" && id.length <= 64 && CHANGE_ID.test(id);
 }
 
+function requiredFileSha(file) {
+  if (!isRealFile(file)) throw new Error(`缺少协议文件：${file}`);
+  return sha256(fs.readFileSync(file));
+}
+
 function fileKey(file) { return file.replace(/\.(?:yaml|md)$/, "").replace(/-([a-z])/g, (_, letter) => letter.toUpperCase()); }
-function isProtocolFile(file) { return fs.existsSync(file) && !fs.lstatSync(file).isSymbolicLink() && fs.statSync(file).isFile(); }
-function readText(file) { return isProtocolFile(file) ? fs.readFileSync(file, "utf8") : ""; }
-function fileShaOrNull(file) { return isProtocolFile(file) ? sha256(fs.readFileSync(file)) : null; }
-function diag(code, file, message) { return diagnostic("error", code, typeof file === "string" && path.isAbsolute(file) ? file : file, null, message); }
+function isRealFile(file) { return fs.existsSync(file) && !fs.lstatSync(file).isSymbolicLink() && fs.statSync(file).isFile(); }
+function readText(file) { return isRealFile(file) ? fs.readFileSync(file, "utf8") : ""; }
+function fileShaOrNull(file) { return isRealFile(file) ? sha256(fs.readFileSync(file)) : null; }
+function diag(code, file, message) { return diagnostic("error", code, file, null, message); }
 function isError(item) { return item.severity === "error"; }
 function compareDiagnostics(a, b) { return `${a.file ?? ""}:${a.line ?? 0}:${a.code}`.localeCompare(`${b.file ?? ""}:${b.line ?? 0}:${b.code}`, "en"); }
 function escapeRegExp(value) { return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"); }

@@ -1,0 +1,35 @@
+schemaVersion: 2
+workflowProtocol: 2
+design:
+  - reviewer: BeaconSage
+    recordedAt: 2026-09-24T03:57:13.079Z
+    digest: 186eb3eb18af1cbf52cdbfa2b025f443b71b680823a19c3eade5a05fe37d9cc4
+    baselineDigest: e170ff0d475b103ec2c60b869d700c7e7216eac0a91d46e19eebce92de23593c
+    artifacts:
+      - path: .arch-lens/changes/local-first-core/change.yaml
+        sha256: b5d946a6a86662811540f17783ae1ba3aefed6811c0c985b12770b0971ab0a90
+      - path: .arch-lens/changes/local-first-core/decisions.md
+        sha256: 3f8e295fd6bca76702e0366ded6ab53fda1d72f3719d940ed7c3f5d9ff4f9c21
+      - path: .arch-lens/changes/local-first-core/proposal.md
+        sha256: 379c99821bf1228a2dc3b8578cdee6c9ea77453f6ab4f8a6d9181662de7ec043
+      - path: .arch-lens/diagrams/check-and-render.sequence.puml
+        sha256: null
+      - path: .arch-lens/diagrams/initialize-managed-runtime.sequence.puml
+        sha256: null
+      - path: .arch-lens/diagrams/local-first-lifecycle.activity.puml
+        sha256: 24944a4f4de0b3309d5f3780e6a1d3246b34f491f4c0436b3f5192dd90841af3
+      - path: .arch-lens/diagrams/local-first-responsibilities.component.puml
+        sha256: b22feeefc21f1b570426a79fa47ec5f81a229f6cfab3215c5472fdcc22e2ef17
+      - path: .arch-lens/diagrams/modeling-review.activity.puml
+        sha256: null
+      - path: .arch-lens/diagrams/runtime-responsibilities.component.puml
+        sha256: null
+      - path: .arch-lens/principles.md
+        sha256: 480b1121967b746a3356dcda277c95ba0ce4ad8c9e82e1558ffdb1b84a8427d2
+completion:
+  - reviewer: BeaconSage
+    recordedAt: 2026-09-24T04:06:42.608Z
+    digest: aace11e82a09ec7e1a9d1d90359c608d0151cf349e1eef20abd5320e59fce66d
+    designDigest: 186eb3eb18af1cbf52cdbfa2b025f443b71b680823a19c3eade5a05fe37d9cc4
+    tasksSha256: 8142edcf9b282c26caf7ae77515daf00cde9e22d0a8c600fbfb1ccb65204cffa
+    verificationSha256: 0fc8a25ed959feeca050a8a3e758d4ebe541b3ca0e49baf90c70a97529c12edf

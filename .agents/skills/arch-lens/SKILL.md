@@ -5,7 +5,7 @@ description: 使用 PlantUML 帮助人类与 AI 理解和设计软件中的业�
 
 # Arch Lens
 
-以 Skill 作为语义工作流，以 CLI 作为确定性辅助工具。把 PlantUML 作为唯一业务模型：顶层 `.arch-lens/diagrams/**/*.puml` 是已批准模型，活动 Change Pack 的 `diagrams/**/*.puml` 是待批准 overlay；相邻层级的 `rendered/**/*.svg` 是受版本控制、不可手工维护的派生审查产物。
+以 Skill 作为语义工作流，以 CLI 作为确定性辅助工具。把 PlantUML 作为唯一业务模型：顶层 `.arch-lens/diagrams/**/*.puml` 是已批准模型，活动 Change Pack 的 `diagrams/**/*.puml` 是待批准 overlay。候选 `rendered/**/*.svg` 只在视觉审查期间临时存在，不进入内容摘要。
 
 ## 开始工作
 
@@ -15,10 +15,10 @@ description: 使用 PlantUML 帮助人类与 AI 理解和设计软件中的业�
 arch-lens capabilities --json
 ```
 
-只在 `workflowProtocol` 为 `1` 且包含 `plantuml-batch-render`、`change-pack-v1`、`approval-digest-v1`、`completion-approval-v1`、`managed-plantuml-runtime-v1`、`change-overlay-v1`、`single-active-change-v1`、`model-baseline-freshness-v1`、`tracked-svg-mirror-v1`、`svg-facts-v1`、`note-budget-v1`、`visual-review-gate-v1` 和 `rebase-stable-evidence-v1` 时继续。不兼容时停止写入并说明应更新 CLI 或项目 Skill。
+只在 `workflowProtocol` 为 `2` 且包含 `plantuml-batch-render`、`change-pack-v2`、`approval-digest-v2`、`completion-approval-v2`、`managed-plantuml-runtime-v1`、`change-overlay-v1`、`single-active-change-v1`、`content-baseline-v1`、`local-first-workspace-v1`、`svg-facts-v1`、`note-budget-v1` 和 `visual-review-gate-v1` 时继续。不兼容时停止写入并说明应更新 CLI 或项目 Skill。
 
-1. 确认仓库已有有效 HEAD；缺少 protocol 1 工作区时，只在允许初始化的干净状态运行 `arch-lens init`。
-2. 确认每个 Git worktree 最多一个活动 Change Pack；并行工作必须拆到独立 branch/worktree，进入目标分支时逐个集成。
+1. 从当前目录向上查找最近的 `.arch-lens/` 作为工作区；没有时只在当前目录运行 `arch-lens init`。不要要求 Git 仓库、HEAD、commit 或干净工作区。
+2. 确认每个工作区最多一个活动 Change Pack；并行工作使用独立工作区，完成后逐个整合。
 3. 读取 `.arch-lens/principles.md`、现有图集，以及 `references/modeling-guide.md`。
 4. 创建或修改 PlantUML 时读取 `references/plantuml-contract.md`。
 5. 创建或推进变更时读取 `references/change-pack-contract.md` 和对应 workflow。
@@ -36,26 +36,28 @@ arch-lens capabilities --json
 
 - **understand project**：读取 `workflows/understand.md`。只读理解不强制 Change Pack；若要持久修改 `.puml`，转入 propose change。
 - **propose change**：读取 `workflows/propose-change.md`。创建 Change Pack，澄清范围与 AC，并形成候选模型。
-- **review model**：读取 `workflows/review-model.md`。生成审查材料，执行语义审查并等待人类决定。
-- **apply change**：读取 `workflows/apply-change.md`。确认设计批准和 model-only commit 后实施代码。
+- **review model**：读取 `workflows/review-model.md`。生成临时候选 SVG，执行语义审查并等待人类决定。
+- **apply change**：读取 `workflows/apply-change.md`。确认设计批准 current 且候选 `.puml` 已提升后实施代码。
 - **review implementation**：读取 `workflows/review-implementation.md`。对照批准模型、AC、代码 diff 和测试编写验证结论。
 - **close change**：读取 `workflows/close-change.md`。在人类明确验收后记录完成批准并归档。
 
 ## 不可越过的边界
 
 - Skill 负责需求澄清、视图选择、PlantUML、方案取舍、跨图一致性和实现语义审查。
-- CLI 只报告文件、Git、摘要、Schema 和 PlantUML 事实；CLI 成功不等于设计正确。
+- CLI 只报告本地文件、内容摘要、Schema、PlantUML facts 和人工审批记录；CLI 成功不等于设计正确，也不读取或解释 Git。
 - 人类负责设计批准、完成验收和风险接受。没有当前会话中的明确授权，禁止调用 `change record-approval`。
 - 不手工编辑 `approval.yaml`，不把 CLI 命令命名为 review、approve 或 verify，也不让脚本模拟语义判断。
-- 设计摘要 stale 时返回模型审查；实现推翻设计时更新 `.puml` 并重新批准。
+- `baselineDigest` stale 时返回模型审查；实现推翻设计时更新 `.puml` 并重新批准。
 - 顶层图集只保存批准模型；新增和修改候选写入 Change Pack overlay，删除只写入 change.yaml。
-- add/modify `.puml` 必须通过标准 render 产生同步 SVG；delete 必须同时删除 `.puml`/SVG。设计摘要和 model-only commit 同时绑定二者。
-- 完成证据在提交身份之外绑定实现内容标识（`git patch-id --stable`）；集成重写历史后按内容标识核对，不按提交身份核对。
-- `baseCommit` 后若已批准模型基线变化，必须先同步 Git、显式运行 `change refresh-base` 并重新审查；不得自动刷新绕过 stale 状态。
-- 每张当前 SVG 的视觉审查必须记录为 PASS、CONCERNS 或 FAIL；任一 add/modify 图不是 PASS 时不得请求或记录设计批准。
-- 未获人类超额授权时不得生成第四张候选图，也不得先生成后用沉没成本证明其必要性。
-- 不引入 XMI、自定义 DSL、Mermaid、D2、`.iuml`、include、Markdown 业务模型或自研 Viewer。
+- add/modify 候选必须先用 `change render <id>` 生成 fresh SVG，并由人类逐图给出 PASS 后才可请求设计批准；SVG 不进入 `designDigest`。
+- `change apply-model <id>` 只提升 `.puml` 并清理候选/临时 SVG；不得要求或创建 model-only commit。
+- `designDigest` 绑定 principles、change.yaml、proposal、decisions 和候选 `.puml`；`completionDigest` 再绑定 tasks 与 verification。
+- 仓库需要提交顺序、patch-id、rebase 或 release 审计时，使用仓库专用 CI/脚本；不得把这些事实写入 CLI/Skill 产品契约。
 
-## 人类审查出口
+## 稳定工作规则
 
-向人类提供 `.puml` 文本 diff、标准 SVG、本地预览入口、每张图的问题、设计理由、证据、风险和未决问题。逐张打开当前 SVG 并检查标签裁切/重叠、交叉线、密度、边界和阅读顺序，记录 PASS/CONCERNS/FAIL；CLI 的尺寸和宽高比事实只用于提示风险。不要只报告 `validate` 通过。实现后还要提供逐项 AC 结果、代码与测试证据、语义一致性结论和残余风险。
+- 不绕过 `change new` 直接把未批准候选写进顶层图集。
+- 不因测试通过就声称实现符合模型；必须完成语义一致性审查。
+- 不把 SVG 当业务模型、长期审计对象或 freshness 摘要输入。
+- 不用 AI 或脚本代替当前会话中的人类设计批准和完成验收。
+- `.arch-lens/` 是否被 Git 跟踪不影响任何 Arch Lens 命令；用户可以整体 gitignore 它。

@@ -1,0 +1,31 @@
+schemaVersion: 2
+workflowProtocol: 2
+id: local-first-core
+baselineDigest: e170ff0d475b103ec2c60b869d700c7e7216eac0a91d46e19eebce92de23593c
+baselineArtifacts:
+  - path: .arch-lens/diagrams/check-and-render.sequence.puml
+    sha256: 365102909c26230d5f91e3b4cc5342a1a07977b7b49d9720513c8f3acb7b7be8
+  - path: .arch-lens/diagrams/initialize-managed-runtime.sequence.puml
+    sha256: 2f82fc6de0464306a514d5d908abd86405694636977328c56ce49fa4e14153f2
+  - path: .arch-lens/diagrams/modeling-review.activity.puml
+    sha256: 31e0ffe0b9aa2ff93f22897e5827bdf35a7f67a2e83eaaab53d31d420b68e10e
+  - path: .arch-lens/diagrams/product-goals.use-case.puml
+    sha256: 0f3074fec80fd0fe515b128ca0ad6e4e9e0c14994a77c8f5bddb3f57f0cc769f
+  - path: .arch-lens/diagrams/runtime-responsibilities.component.puml
+    sha256: 768e21b603aab36353be9a6f9e02c6878ecdcf8fab71e5c442feb39af6da982c
+  - path: .arch-lens/principles.md
+    sha256: 480b1121967b746a3356dcda277c95ba0ce4ad8c9e82e1558ffdb1b84a8427d2
+createdAt: 2026-09-24T03:28:24.115Z
+diagrams:
+  - path: .arch-lens/diagrams/check-and-render.sequence.puml
+    operation: delete
+  - path: .arch-lens/diagrams/initialize-managed-runtime.sequence.puml
+    operation: delete
+  - path: .arch-lens/diagrams/modeling-review.activity.puml
+    operation: delete
+  - path: .arch-lens/diagrams/runtime-responsibilities.component.puml
+    operation: delete
+  - path: .arch-lens/diagrams/local-first-lifecycle.activity.puml
+    operation: add
+  - path: .arch-lens/diagrams/local-first-responsibilities.component.puml
+    operation: add

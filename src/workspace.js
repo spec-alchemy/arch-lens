@@ -9,7 +9,7 @@ import {
   WORKFLOW_PROTOCOL,
   atomicWrite
 } from "./core.js";
-import { changedPaths, git, gitStatusEntries, requireRepository } from "./repository.js";
+import { projectInstallRoot } from "./repository.js";
 import { ensureManagedPlantUml } from "./plantuml-runtime.js";
 
 const MARKER_START = "<!-- ARCH-LENS:START -->";
@@ -21,17 +21,16 @@ const skillSource = path.join(moduleRoot, ".agents", "skills", "arch-lens");
 const principlesTemplate = path.join(moduleRoot, "templates", "principles.md");
 
 export async function initWorkspace(cwd) {
-  const repository = requireRepository(cwd);
-  assertNoIncompatibleState(repository.root);
-  validateInitWorktree(repository.root);
+  const root = path.resolve(cwd);
+  assertNoIncompatibleState(root);
   const plantUmlRuntime = await ensureManagedPlantUml();
 
-  const diagramsRoot = path.join(repository.root, DIAGRAMS_RELATIVE_PATH);
-  const principlesPath = path.join(repository.root, PRINCIPLES_RELATIVE_PATH);
-  const changesRoot = path.join(repository.root, CHANGES_RELATIVE_PATH);
+  const diagramsRoot = path.join(root, DIAGRAMS_RELATIVE_PATH);
+  const principlesPath = path.join(root, PRINCIPLES_RELATIVE_PATH);
+  const changesRoot = path.join(root, CHANGES_RELATIVE_PATH);
   const archiveRoot = path.join(changesRoot, "archive");
-  const skillTarget = path.join(repository.root, ".agents", "skills", "arch-lens");
-  const agentsPath = path.join(repository.root, "AGENTS.md");
+  const skillTarget = path.join(root, ".agents", "skills", "arch-lens");
+  const agentsPath = path.join(root, "AGENTS.md");
   for (const [target, label] of [[diagramsRoot, DIAGRAMS_RELATIVE_PATH], [changesRoot, CHANGES_RELATIVE_PATH]]) {
     if (fs.existsSync(target) && (fs.lstatSync(target).isSymbolicLink() || !fs.statSync(target).isDirectory())) throw new Error(`${label} 必须是真实目录且不得是符号链接。`);
   }
@@ -51,7 +50,6 @@ export async function initWorkspace(cwd) {
   writeExclusiveIfMissing(principlesPath, fs.readFileSync(principlesTemplate));
   installSkill(skillTarget);
   upsertManagedMarker(agentsPath, agentsMarker());
-  updateGitignore(repository.root);
   return {
     created: !alreadyInitialized,
     workflowProtocol: WORKFLOW_PROTOCOL,
@@ -68,18 +66,14 @@ export function installAgent(cwd, agent, options) {
   if (flags.length > 1) throw new Error("--scope、--project 和 --global 不能同时使用。");
   const scope = options.scope ?? (options.global ? "global" : "project");
   if (!new Set(["project", "global"]).has(scope)) throw new Error("安装范围必须为 project 或 global。");
-  const base = scope === "global" ? path.join(os.homedir(), ".agents", "skills") : path.join(requireRepository(cwd).root, ".agents", "skills");
+  const base = scope === "global" ? path.join(os.homedir(), ".agents", "skills") : path.join(projectInstallRoot(cwd), ".agents", "skills");
   const target = path.join(base, "arch-lens");
   const result = installSkill(target);
   return { target, ...result };
 }
 
 function assertNoIncompatibleState(root) {
-  const found = [];
-  for (const entry of INCOMPATIBLE_PATHS) {
-    const tracked = git(root, ["ls-files", "--", entry]);
-    if (fs.existsSync(path.join(root, entry)) || (tracked.status === 0 && tracked.stdout.trim())) found.push(entry);
-  }
+  const found = INCOMPATIBLE_PATHS.filter((entry) => fs.existsSync(path.join(root, entry)));
   if (found.length > 0) throw new Error(`发现不兼容的旧 Arch Lens 资产；draft 不自动迁移或删除，请先备份并人工处理：${found.join("、")}`);
 }
 
@@ -99,26 +93,8 @@ function assertRecognizedChangeWorkspace(changesRoot) {
   }
 }
 
-function validateInitWorktree(root) {
-  const disallowed = changedPaths(root).filter((entry) => !isManagedInitPath(entry));
-  if (disallowed.length > 0) throw new Error(`init 只允许干净工作区或 Arch Lens 自身的初始化状态；请先处理：${disallowed.join("、")}`);
-  for (const incompatible of INCOMPATIBLE_PATHS) {
-    const statuses = gitStatusEntries(root, incompatible, true);
-    if (statuses.length > 0) throw new Error(`发现不兼容的旧 Arch Lens 资产；draft 不自动迁移或删除：${incompatible}`);
-  }
-}
-
-function isManagedInitPath(entry) {
-  return entry === "AGENTS.md"
-    || entry === ".gitignore"
-    || entry === ".arch-lens"
-    || entry.startsWith(".arch-lens/")
-    || entry === ".agents/skills/arch-lens"
-    || entry.startsWith(".agents/skills/arch-lens/");
-}
-
 function agentsMarker() {
-  return `${MARKER_START}\n本项目使用 Arch Lens draft workflowProtocol ${WORKFLOW_PROTOCOL}；Skill 负责业务建模与语义审查，CLI 只提供确定性辅助能力。\n\n- 修改建模资产前，Skill 必须先执行 \`arch-lens capabilities --json\` 并确认协议兼容。\n- 每个 Git worktree 最多一个活动 Change Pack；并行变更使用独立 branch/worktree，目标分支逐个集成。\n- 已批准的业务模型位于 \`.arch-lens/diagrams/**/*.puml\`；未批准候选只位于对应 Change Pack 的 \`diagrams/\` overlay。\n- 持久建模默认一张主视图、通常最多三张；第四张起须逐张论证，并在生成前取得人类明确同意。\n- 每个标准 \`.puml\` 必须有受版本控制且由锁定受管 PlantUML 生成的同路径 \`rendered/**/*.svg\`；SVG 是派生审查产物，PlantUML 仍是唯一业务模型。\n- review-model 必须逐张打开当前 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；任一结果不是 PASS 时不得请求设计批准。\n- 任何持久 PlantUML 变更必须进入 Change Pack，并在实现代码前获得人类设计批准、\`change apply-model\` 和 model-only commit。\n- AI 不得自行记录设计或完成批准；实现后必须对照批准模型、代码 diff、测试和 AC 做语义审查。\n- 规范 Skill 位于 \`.agents/skills/arch-lens/\`。\n${MARKER_END}`;
+  return `${MARKER_START}\n本项目使用 Arch Lens local-first workflowProtocol ${WORKFLOW_PROTOCOL}；Skill 负责业务建模与语义审查，CLI 只提供确定性辅助能力。\n\n- 修改建模资产前，Skill 必须先执行 \`arch-lens capabilities --json\` 并确认协议兼容。\n- 每个工作区最多一个活动 Change Pack；并行变更使用独立工作区，完成后逐个整合。\n- 已批准的业务模型位于 \`.arch-lens/diagrams/**/*.puml\`；未批准候选只位于对应 Change Pack 的 \`diagrams/\` overlay。\n- 持久建模默认一张主视图、通常最多三张；第四张起须逐张论证，并在生成前取得人类明确同意。\n- 标准 \`.puml\` 的批准绑定内容摘要；SVG 只是审查期间的临时派生产物，PlantUML 仍是唯一业务模型。\n- review-model 必须逐张生成并打开当前候选 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；任一结果不是 PASS 时不得请求设计批准。\n- 任何持久 PlantUML 变更必须进入 Change Pack，并在实现代码前获得人类设计批准和 \`change apply-model\`。\n- AI 不得自行记录设计或完成批准；实现后必须对照批准模型、代码 diff、测试和 AC 做语义审查。\n- 规范 Skill 位于 \`.agents/skills/arch-lens/\`。\n${MARKER_END}`;
 }
 
 function hasManagedMarker(file) {
@@ -135,18 +111,6 @@ function upsertManagedMarker(file, marker) {
     ? `${current.slice(0, start)}${marker}${current.slice(end + MARKER_END.length)}`
     : `${current}${current && !current.endsWith("\n") ? "\n" : ""}${current ? "\n" : ""}${marker}\n`;
   atomicWrite(file, Buffer.from(next));
-}
-
-function updateGitignore(root) {
-  const target = path.join(root, ".gitignore");
-  const obsoleteRules = new Set([".arch-lens/rendered/", ".arch-lens/changes/**/rendered/"]);
-  const current = fs.existsSync(target) ? fs.readFileSync(target, "utf8") : "";
-  const lines = current.split(/\r?\n/);
-  const filtered = lines.filter((line) => !obsoleteRules.has(line));
-  if (filtered.length === lines.length) return;
-  while (filtered.length > 1 && filtered.at(-1) === "" && filtered.at(-2) === "") filtered.pop();
-  const next = filtered.join("\n");
-  atomicWrite(target, Buffer.from(next && !next.endsWith("\n") ? `${next}\n` : next));
 }
 
 function writeExclusiveIfMissing(file, content) {

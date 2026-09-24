@@ -1,0 +1,38 @@
+@startuml
+' arch-lens: type=component
+' arch-lens: question=在单一 local-first 产品边界内，Skill、CLI、工作区、受管 PlantUML 与人类如何分工，Git 为何只在边界外？
+title Local-first 职责与边界
+!pragma layout smetana
+top to bottom direction
+
+actor "人类审查者" as Reviewer
+actor "AI Agent" as Agent
+
+rectangle "Arch Lens local-first core" as Core {
+  component "Arch Lens Skill\n语义、建模、视觉与实现审查" as Skill
+  component "Deterministic CLI\ncontent digests、schema、PlantUML facts" as CLI
+  artifact "Managed PlantUML\nlocal renderer" as PlantUML
+  folder "Workspace .arch-lens/" as Workspace {
+    file "principles.md" as Principles
+    folder "diagrams/**/*.puml\ncanonical models" as Diagrams
+    folder "changes/<id>/\nproposal、decisions、tasks、approval、verification" as Change
+    folder "temporary rendered SVG\ncache only" as Rendered
+  }
+}
+
+component "Repository CI/scripts\noptional and outside product contract" as RepoCI
+component "Git\nnot read by CLI or Skill" as Git
+
+Agent --> Skill : proposes and reviews
+Reviewer --> Skill : approves design and completion
+Skill --> CLI : requests deterministic facts
+CLI --> Workspace : reads and writes protocol files
+CLI --> PlantUML : renders candidate SVG
+PlantUML --> Rendered : temporary visual review material
+CLI --> CLI : computes baselineDigest、designDigest、completionDigest
+Skill --> Diagrams : maintains candidate and approved content
+Skill --> Change : records decisions and evidence
+RepoCI --> Git : repo-only audit
+
+note bottom of Git: Git 与提交身份不进入 CLI/Skill 的任何状态判断。
+@enduml

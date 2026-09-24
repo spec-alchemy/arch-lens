@@ -1,8 +1,8 @@
 # Arch Lens
 
-Arch Lens 是面向人类与 AI 协作的 Skill-first PlantUML 业务建模与变更审查工作区。它帮助团队理解参与者目标、系统用例、领域实体与规则、业务流程、职责协作、生命周期、组件边界和接口，并让设计决策与实现证据保持可追溯。
+Arch Lens 是面向人类与 AI 协作的 Skill-first PlantUML 业务建模与变更审查工作区。它帮助团队理解参与者目标、系统用例、领域实体与规则、业务流程、职责协作、生命周期、组件边界和接口，并让设计决策与实现证据保持内容可追溯。
 
-当前版本为 `0.1.0-alpha.3`。预览阶段的 CLI、Skill、PlantUML 合同和 Change Pack 协议仍可能演进。
+当前版本为 `0.1.0-alpha.3`，本地内容协议为 `workflowProtocol 2`。协议 2 允许显式不兼容旧的 commit/SVG 审计模型。
 
 ## 安装
 
@@ -24,38 +24,28 @@ npx @spec-alchemy/arch-lens@next capabilities --json
 - 使用可读、可编辑的 PlantUML 文件表达业务模型。
 - 通过最少必要的视图厘清边界、职责、流程和生命周期。
 - 由 Skill 负责理解、建模、方案取舍和语义审查。
-- 由 CLI 提供文件、Git、摘要和 PlantUML 的确定性校验。
+- 由 CLI 提供本地文件、内容摘要、Schema、PlantUML 检查/渲染和归档的确定性辅助。
 - 通过 Change Pack 记录问题、决策、任务、人工批准和实现证据。
-- 每个 worktree 只推进一个活动 Change Pack；并行变更使用独立 branch/worktree。
-- 通过受版本控制的标准 SVG 和逐图视觉结论审查实际渲染结果。
+- 每个工作区只推进一个活动 Change Pack；并行变更使用独立工作区。
+- 设计批准前生成 fresh 候选 SVG 并要求逐图视觉 `PASS`；SVG 只是可清理的审查材料。
 - 对 PlantUML note 报告条数、行数、行数占比和单条规模 warning，避免图面成为第二份需求或代码文档。
+- CLI 与 Skill 不读取、不要求、不解释 Git；`.arch-lens/` 可以整体 gitignore。
 
 ## 快速开始
 
-需要 Node.js 20+、Java 21+ 和一个已有提交的 Git 仓库。使用全局安装后运行：
+需要 Node.js 20+ 和 Java 21+。工作目录可以是普通目录，无需 Git 仓库或已有提交：
 
 ```sh
+mkdir my-project
+cd my-project
 arch-lens capabilities --json
 arch-lens init
 arch-lens diagrams check
 ```
 
-`init` 会在用户缓存中安装并校验受管 PlantUML 运行时，然后创建项目级建模工作区。模型始终在本地处理，不上传到远程服务。
+`init` 会在当前目录创建 `.arch-lens/`，在用户缓存中安装并校验受管 PlantUML 运行时，并安装项目级 Codex Skill。模型始终在本地处理，不上传到远程服务。
 
-发布通道：alpha 使用 npm `next`，beta 与 rc 使用 `beta`，GA 使用 `latest`；完整规则见 [RELEASING.md](RELEASING.md)。从受保护 `main` 发布时执行：
-
-```sh
-npm run release:check
-npm publish --access public --tag next
-```
-
-GitHub 预发布版本使用同名 tag：
-
-```sh
-git tag -a v0.1.0-alpha.3 -m "Arch Lens v0.1.0-alpha.3"
-git push origin v0.1.0-alpha.3
-gh release create v0.1.0-alpha.3 --repo spec-alchemy/arch-lens --title "Arch Lens v0.1.0-alpha.3" --generate-notes --prerelease
-```
+发布通道：alpha 使用 npm `next`，beta 与 rc 使用 `beta`，GA 使用 `latest`；完整规则见 [RELEASING.md](RELEASING.md)。
 
 ## 协作工作流
 
@@ -68,23 +58,29 @@ review implementation
 close change
 ```
 
-典型变更先形成问题、范围、决策和最少必要的 PlantUML 候选。人类审查模型并批准后，CLI 提升候选并形成 model-only commit；AI 再实施代码、核对验收标准和测试证据，最后由人类验收并归档 Change Pack。
+典型变更先形成问题、范围、决策和最少必要的 PlantUML 候选。设计批准要求 fresh 候选 SVG 和逐图 `PASS`；人类批准后，CLI 提升 `.puml` 并清理临时 SVG。AI 再实施代码、对照模型检查语义并核对验收标准和测试证据，最后由人类完成验收并归档 Change Pack。
 
-同一 Git worktree 最多存在一个活动 Change Pack。并行贡献者在独立 branch/worktree 中工作，进入目标分支时逐个集成；若 `baseCommit` 后已批准模型发生变化，先同步 Git，再运行 `arch-lens change refresh-base <id>` 并重新审查。
+同一工作区最多存在一个活动 Change Pack。canonical `principles.md` 或 `.puml` 内容变化后，`baselineDigest` 变为 stale；确认内容后运行：
+
+```sh
+arch-lens change refresh-baseline <id>
+```
+
+刷新只更新本地内容基线并使旧设计批准 stale，必须重新进行语义审查和人工批准。
 
 ## 工作区
 
 ```text
 .arch-lens/
 ├── principles.md                # 项目目的、建模边界和质量门禁
-├── diagrams/**/*.puml           # 已批准业务模型
-├── rendered/**/*.svg            # 已批准模型的受版本控制标准镜像
-├── changes/
-│   ├── <change-id>/             # 唯一活动 Change Pack、候选 overlay 与 SVG
-│   └── archive/                 # 完成后的 Change Pack
+├── diagrams/**/*.puml           # 唯一业务模型与已批准内容
+├── rendered/**/*.svg            # 可选预览缓存，不参与门禁或摘要
+└── changes/
+    ├── <change-id>/             # 唯一活动 Change Pack、候选 overlay 与临时 SVG
+    └── archive/                 # 完成后的 Change Pack
 ```
 
-PlantUML 是唯一可编辑的业务模型。每个标准 `.puml` 都有由锁定受管 PlantUML 生成的同路径 SVG；SVG 进入 Git 以支持 fresh clone 和历史审查，但仍是不可手工维护的派生材料。Change Pack 记录上下文和证据，不复制图中的实体、关系或流程。
+PlantUML 是唯一可编辑的业务模型。Change Pack 记录上下文和证据，不复制图中的实体、关系或流程。SVG 可以在本地生成、打开和删除，但不进入 `designDigest`、归档状态或 Git 审计契约。
 
 ## CLI
 
@@ -92,33 +88,39 @@ PlantUML 是唯一可编辑的业务模型。每个标准 `.puml` 都有由锁�
 arch-lens capabilities [--json]
 arch-lens init [--json]
 arch-lens diagrams list|check|render [options]
-arch-lens change new|status|validate|diff|render|refresh-base [options]
+arch-lens change new|status|validate|diff|render|refresh-baseline [options]
 arch-lens change apply-model|record-approval|evidence|archive [options]
 arch-lens install-agent codex --scope project|global
 ```
 
-Skill 负责语义判断，CLI 负责可计算事实。设计批准和完成验收都来自人类明确决定。
+Skill 负责语义判断，CLI 负责可计算事实。设计批准和完成验收都来自人类明确决定。已删除的 `change archive-evidence`、baseCommit、implementation commit 和 patch-id 不属于协议 2 接口。
 
 ## PlantUML 审查
 
-每张 `.puml` 都是自包含文件，也适合用 VS Code 或 JetBrains 的 PlantUML 插件预览。标准审查材料通过以下命令刷新：
+每个 `.puml` 都自包含，也适合用 VS Code 或 JetBrains 的 PlantUML 插件预览。常用命令：
 
 ```sh
-node bin/arch-lens.js diagrams render
-node bin/arch-lens.js diagrams check
+arch-lens diagrams check
+arch-lens diagrams render              # 可选预览缓存
+arch-lens change render <id>           # 候选视觉审查材料
 ```
 
-标准 SVG 由锁定运行时原子生成并进入 Git；检查会在内存中重渲染并核对 PlantUML 源指纹，同时报告 SHA-256、viewBox、宽高、宽高比和 note 统计。note 超预算、单条过长或行数占比过高只产生 warning，不会阻塞结构校验。源指纹避免不同 Graphviz 平台的布局字节差异造成误报；缺少指纹的旧 SVG 仍按完整字节校验。AI 或人类仍必须逐张打开 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；CLI 不会宣称图面美观或语义正确。
+`diagrams check` 检查离线资源策略、PlantUML 语法、note facts 和结构，不要求 canonical SVG 缓存。`change render` 在 Change Pack 的临时 `rendered/` 中生成候选 SVG；设计批准前必须逐张打开并检查裁切、重叠、交叉线、密度、边界和阅读顺序。
+
+CLI 报告 SHA-256、viewBox、宽高、宽高比和稳定风险 facts，但不声称图面美观或语义正确。极端的宽高比以及 note 预算超限是 warning，需要人工判断。
+
+## 离线与边界
+
+Arch Lens 禁止 PlantUML include、URL、外部图片和符号链接，并以 SANDBOX、headless 和 stdin 方式调用本地 PlantUML。它不会把模型上传到远程渲染服务。
+
+仓库若需要提交顺序、patch-id、rebase merge、Release 或长期审计，由仓库专用 CI/脚本处理；这些事实不属于 Arch Lens CLI/Skill 产品协议。
 
 ## 开发
 
 ```sh
 npm ci
 npm test
-node bin/arch-lens.js diagrams check
-npm pack --dry-run
-# 或运行完整发布前检查
 npm run release:check
 ```
 
-贡献流程、分支规则和版本计划见 [CONTRIBUTING.md](CONTRIBUTING.md)。许可证和第三方依赖说明见 [LICENSE](LICENSE) 与 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+测试使用 Node 内置 `node:test`，在临时目录中通过真实 `bin/arch-lens.js` 入口运行，并覆盖非 Git 工作区和整体 gitignore `.arch-lens/` 的行为。

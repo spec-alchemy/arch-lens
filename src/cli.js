@@ -8,7 +8,7 @@ import {
   localizeCommanderError,
   printJson
 } from "./core.js";
-import { applyModel, archiveChange, changeArchiveEvidence, changeEvidence, changeStatus, createChange, diffChange, recordApproval, refreshChangeBase, renderChange, validateChangeCommand } from "./change-pack.js";
+import { applyModel, archiveChange, changeEvidence, changeStatus, createChange, diffChange, recordApproval, refreshBaseline, renderChange, validateChangeCommand } from "./change-pack.js";
 import { checkDiagrams, listDiagrams, renderDiagrams } from "./plantuml.js";
 import { initWorkspace, installAgent } from "./workspace.js";
 
@@ -73,7 +73,7 @@ export async function runCli(argv = process.argv) {
       emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, result.files.length === 0 ? "图集为空；无需执行 PlantUML 检查。" : `PlantUML 检查通过（${result.files.length} 个文件）。`);
     }));
   diagrams.command("render").argument("[files...]", "要渲染的图，默认渲染完整图集")
-    .option("--output <dir>", "SVG 输出目录（默认：Git 根/.arch-lens/rendered）")
+    .option("--output <dir>", "SVG 输出目录（默认：工作区/.arch-lens/rendered 缓存）")
     .description("先检查图集合同，再使用本地 PlantUML 生成 SVG。")
     .option("--json", "输出机器可读 JSON")
     .action((files, options) => runOrExit(options.json, () => {
@@ -84,14 +84,14 @@ export async function runCli(argv = process.argv) {
   const change = program.command("change").description("管理确定性的 Change Pack 文件、摘要、审批记录与归档事实。");
   change.command("new").argument("<id>", "小写 kebab-case Change ID")
     .option("--json", "输出机器可读 JSON")
-    .description("从当前 HEAD 创建固定 Change Pack 脚手架。")
+    .description("从当前本地内容基线创建固定 Change Pack 脚手架。")
     .action((id, options) => runOrExit(options.json, () => {
       const result = createChange(process.cwd(), id);
       emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, `已创建 Change Pack：${result.path}`);
     }));
   change.command("status").argument("[id]", "Change ID；省略时列出全部活动变更")
     .option("--json", "输出机器可读 JSON")
-    .description("报告文件、Git、摘要、任务、验证和审批事实。")
+    .description("报告文件、内容基线、摘要、任务、验证和审批事实。")
     .action((id, options) => runOrExit(options.json, () => {
       const result = changeStatus(process.cwd(), id);
       if (options.json) printJson({ schemaVersion: SCHEMA_VERSION, ...result });
@@ -99,14 +99,14 @@ export async function runCli(argv = process.argv) {
     }));
   change.command("validate").argument("<id>", "Change ID")
     .option("--json", "输出机器可读 JSON")
-    .description("检查 Change Pack Schema、引用、Git 事实和 PlantUML。")
+    .description("检查 Change Pack Schema、引用、内容事实和 PlantUML。")
     .action((id, options) => runOrExit(options.json, () => {
       const result = validateChangeCommand(process.cwd(), id);
-      emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, `Change Pack ${id} 的结构、Git 事实和 PlantUML 检查通过。`);
+      emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, `Change Pack ${id} 的结构、内容事实和 PlantUML 检查通过。`);
     }));
   change.command("diff").argument("<id>", "Change ID")
     .option("--json", "输出机器可读 JSON")
-    .description("从 baseCommit 与候选 overlay 生成只读 PlantUML 文本 diff。")
+    .description("从 canonical 内容与候选 overlay 生成只读 PlantUML 文本 diff。")
     .action((id, options) => runOrExit(options.json, () => {
       const result = diffChange(process.cwd(), id);
       if (options.json) printJson({ schemaVersion: SCHEMA_VERSION, ...result });
@@ -114,24 +114,24 @@ export async function runCli(argv = process.argv) {
     }));
   change.command("render").argument("<id>", "Change ID")
     .option("--json", "输出机器可读 JSON")
-    .description("使用锁定受管 PlantUML 原子刷新候选标准 SVG 镜像。")
+    .description("使用锁定受管 PlantUML 原子刷新候选 SVG 审查材料。")
     .action((id, options) => runOrExit(options.json, () => {
       const result = renderChange(process.cwd(), id);
       emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, result.rendered.length === 0 ? "该变更没有可渲染的候选图。" : `已生成 ${result.rendered.length} 个候选 SVG 到 ${result.output}。`);
     }));
-  change.command("refresh-base").argument("<id>", "Change ID")
+  change.command("refresh-baseline").argument("<id>", "Change ID")
     .option("--json", "输出机器可读 JSON")
-    .description("把已同步的当前 HEAD 显式记录为新模型基线，并使既有设计批准失效。")
+    .description("把当前 principles 与 canonical .puml 内容显式记录为新模型基线，并使既有设计批准失效。")
     .action((id, options) => runOrExit(options.json, () => {
-      const result = refreshChangeBase(process.cwd(), id);
-      emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, `已把 Change Pack ${id} 的 baseCommit 刷新为 ${result.baseCommit}；必须重新审查设计。`);
+      const result = refreshBaseline(process.cwd(), id);
+      emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, `已把 Change Pack ${id} 的 baselineDigest 刷新为 ${result.baselineDigest}；必须重新审查设计。`);
     }));
   change.command("apply-model").argument("<id>", "Change ID")
     .option("--json", "输出机器可读 JSON")
     .description("在设计批准有效时原子提升候选 overlay 到已批准图集。")
     .action((id, options) => runOrExit(options.json, () => {
       const result = applyModel(process.cwd(), id);
-      emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, `已提升 Change Pack ${id} 的 ${result.applied.length} 张模型图；请形成 model-only commit。`);
+      emit(options.json, { schemaVersion: SCHEMA_VERSION, ...result }, `已提升 Change Pack ${id} 的 ${result.applied.length} 张模型图；候选 SVG 已清理。`);
     }));
   change.command("record-approval").argument("<id>", "Change ID")
     .requiredOption("--stage <stage>", "记录阶段：design 或 completion")
@@ -144,18 +144,9 @@ export async function runCli(argv = process.argv) {
     }));
   change.command("evidence").argument("<id>", "Change ID")
     .option("--json", "输出机器可读 JSON")
-    .description("读取 model-only commit 之后的 Git、任务和 AC 事实。")
+    .description("读取内容摘要、任务、AC 与人工验收事实。")
     .action((id, options) => runOrExit(options.json, () => {
       const result = changeEvidence(process.cwd(), id);
-      if (options.json) printJson({ schemaVersion: SCHEMA_VERSION, ...result });
-      else console.log(JSON.stringify(result, null, 2));
-    }));
-  change.command("archive-evidence").argument("<id>", "Change ID")
-    .option("--ref <ref>", "用于核对实现内容标识的 Git 引用", "HEAD")
-    .option("--json", "输出机器可读 JSON")
-    .description("只读报告已归档 Change Pack 的完成证据与实现内容标识核对事实。")
-    .action((id, options) => runOrExit(options.json, () => {
-      const result = changeArchiveEvidence(process.cwd(), id, options.ref);
       if (options.json) printJson({ schemaVersion: SCHEMA_VERSION, ...result });
       else console.log(JSON.stringify(result, null, 2));
     }));
@@ -213,7 +204,7 @@ function formatStatus(result) {
     `Model baseline: ${result.baseline.state}`,
     `Design approval: ${result.designApproval.state}`,
     `Completion approval: ${result.completionApproval.state}`,
-    `SVG mirror: ${result.svg.valid === true ? "current" : result.svg.valid === false ? "invalid" : "not checked"} (${result.svg.files.length} files)`,
+    `Review SVG: ${result.svg.valid === true ? "fresh" : result.svg.valid === false ? "invalid" : "not checked"} (${result.svg.files.length} files)`,
     `Visual review: ${result.visualReview.pass}/${result.visualReview.total} PASS`,
     `Tasks: ${result.tasks.completed}/${result.tasks.total}`,
     `Open questions: ${result.openQuestions.open}/${result.openQuestions.total}`,

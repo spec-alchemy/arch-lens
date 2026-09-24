@@ -3,22 +3,21 @@ import fs from "node:fs";
 import path from "node:path";
 
 export const VERSION = "0.1.0-alpha.3";
-export const SCHEMA_VERSION = 1;
-export const WORKFLOW_PROTOCOL = 1;
+export const SCHEMA_VERSION = 2;
+export const WORKFLOW_PROTOCOL = 2;
 export const FEATURES = Object.freeze([
   "plantuml-batch-render",
-  "change-pack-v1",
-  "approval-digest-v1",
-  "completion-approval-v1",
+  "change-pack-v2",
+  "approval-digest-v2",
+  "completion-approval-v2",
   "managed-plantuml-runtime-v1",
   "change-overlay-v1",
   "single-active-change-v1",
-  "model-baseline-freshness-v1",
-  "tracked-svg-mirror-v1",
+  "content-baseline-v1",
+  "local-first-workspace-v1",
   "svg-facts-v1",
   "note-budget-v1",
-  "visual-review-gate-v1",
-  "rebase-stable-evidence-v1"
+  "visual-review-gate-v1"
 ]);
 export const DIAGRAMS_RELATIVE_PATH = ".arch-lens/diagrams";
 export const PRINCIPLES_RELATIVE_PATH = ".arch-lens/principles.md";

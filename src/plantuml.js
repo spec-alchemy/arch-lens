@@ -60,17 +60,8 @@ export function checkDiagrams(cwd, requestedFiles = []) {
   const diagnostics = inspection.diagnostics;
   if (diagnostics.some(isError)) throw operationError("PlantUML 离线资源策略检查失败。", diagnostics);
   if (records.length > 0) validateSyntax(workspace.root, records, diagnostics);
-  const mirror = validateSvgMirror(workspace.root, records.map((record) => ({
-    ...record,
-    svgFile: path.join(workspace.root, ".arch-lens", "rendered", path.relative(workspace.diagramsRoot, record.file).replace(/\.puml$/i, ".svg"))
-  })), {
-    renderedRoot: path.join(workspace.root, ".arch-lens", "rendered"),
-    fullMirror: !requestedFiles || requestedFiles.length === 0,
-    inspectPolicy: false
-  });
-  diagnostics.push(...mirror.diagnostics);
   if (diagnostics.some(isError)) throw operationError("PlantUML 检查失败。", diagnostics);
-  return { valid: true, files: records.map((record) => record.path), source: inspection.facts, svg: mirror.facts, diagnostics: diagnostics.sort(compareDiagnostics) };
+  return { valid: true, files: records.map((record) => record.path), source: inspection.facts, svg: [], diagnostics: diagnostics.sort(compareDiagnostics) };
 }
 
 export function renderDiagrams(cwd, requestedFiles = [], output) {
@@ -299,7 +290,7 @@ function resolvePlantUmlRunner({ managedOnly = false } = {}) {
     }
     const jar = managed;
     if (!jar || !fs.existsSync(jar) || fs.lstatSync(jar).isSymbolicLink() || !fs.statSync(jar).isFile()) {
-      throw new Error("标准 SVG 必须使用锁定的受管 PlantUML；请先运行 arch-lens init。ARCH_LENS_PLANTUML 不能用于标准镜像。");
+      throw new Error("候选 SVG 审查必须使用锁定的受管 PlantUML；请先运行 arch-lens init。ARCH_LENS_PLANTUML 不能用于该路径。");
     }
     const java = findExecutable(process.platform === "win32" ? "java.exe" : "java");
     if (!java) throw new Error("受管 PlantUML 已安装，但 PATH 中未找到 Java 21 或更高版本。");
