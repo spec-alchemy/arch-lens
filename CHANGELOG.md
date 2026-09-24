@@ -1,18 +1,19 @@
 # Changelog
 
-## Unreleased
+本项目的公开变化记录在此文件中。
+
+## 0.1.0-alpha.4 - 2026-09-24
 
 - **Breaking:** 引入 `workflowProtocol 2` 和单一 local-first 模式。CLI/Skill 不再读取、要求或解释 Git，工作区由 `.arch-lens/` 向上发现，`init` 可在非 Git 目录运行。
 - 删除 `persistence` / `renderedSvg` 模式、`baseCommit`、model-only commit、implementation commit、`implementation-patch-id`、`archive-evidence` 和 `rebase-stable-evidence-v1`。
 - 使用 `baselineDigest`、`designDigest` 和 `completionDigest` 绑定本地内容；新增 `change refresh-baseline`。
 - candidate SVG 改为临时视觉审查材料，不进入批准摘要、归档状态或 Git 审计契约；fresh SVG 与逐图 PASS 门禁保留。
 - 测试新增非 Git 工作区、gitignored `.arch-lens/`、无 canonical SVG 缓存、内容 stale/refresh 和纯内容完成流程。
+- `diagrams render` 使用 `mode: workspace-cache|explicit` 报告输出模式，不再暴露旧镜像字段。
 - 协议 1 Change Pack、approval.yaml 与旧的版本控制 SVG 工作区不自动迁移。
-
-本项目的公开变化记录在此文件中。
-
 - 新增 `RELEASING.md`：定义 alpha → beta → rc → GA 的发布通道、质量门禁与 soak 节奏。beta 与 rc 使用 npm `beta` 通道，GA 使用 `latest`。
 - 澄清版本号规则：预发布线内允许破坏性变更且不提升版本号；`0.1.0` 之后的 `0.1.x` 只允许兼容修复。
+- 发布引用：`v0.1.0-alpha.4`。
 
 ## 0.1.0-alpha.3 - 2026-09-23
 
