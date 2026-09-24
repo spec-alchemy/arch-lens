@@ -18,6 +18,9 @@ test("公开基线只呈现当前产品入口并保留合法历史归档", () =>
   assert.match(principles, /## Responsibility Boundary/);
   assert.match(principles, /## Quality Gates/);
   assert.doesNotMatch(principles, /TODO/);
+  assert.doesNotMatch(principles, /model-only commit|implementation-commit|implementation-patch-id|baseCommit|受版本控制|标准 SVG|\bGit\b/);
+  assert.match(principles, /baselineDigest.*designDigest.*completionDigest/s);
+  assert.match(principles, /fresh 候选 SVG/);
 
   assert.ok(archiveEntries.includes(".gitkeep"));
   assert.ok(archiveEntries.every((entry) => entry === ".gitkeep" || /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(entry)));
