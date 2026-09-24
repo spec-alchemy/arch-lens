@@ -71,37 +71,80 @@
 
 即：采纳「beta 每 1–2 周」作为 soak 窗口，**不**采用「正式版每 2 周发一次」的固定日历。GA 由质量决定，不由日期决定。
 
+## 发布方式
+
+Arch Lens 使用 npm staged publishing，而不是 CI 直接发布：
+
+- GitHub Actions 只在 tag 指向受保护 `main` 当前 HEAD、tag 与 `package.json` 版本一致且全部门禁通过后执行 `npm stage publish`。
+- npm Trusted Publisher 只授予 `createStagedPackage`，不授予直接发布权限；仓库和 GitHub 组织不保存 `NPM_TOKEN`。
+- OIDC 自动提供 provenance。最终发布必须由维护者在 npm 端检查 staged package，并用交互式 2FA 批准。
+- staged publishing 只把构建与批准分离，**不会降低**供应链攻击的影响；因此不得把它描述为比直接发布“更安全”，也不得放宽代码审查和 tag 控制。
+
+当前发布流程要求 Node.js 22.14+ 与 npm 11.15+。本地可通过 `npx npm@11.15.0` 使用相同版本，不需要在仓库或 shell 中长期保存 npm token。
+
 ## 发布清单
 
-从合并后的干净受保护 `main` 执行，发布前先同步本地：
+### 1. 准备发布提交
+
+在受保护分支上更新 `package.json`、`CHANGELOG.md` 和适用文档，完成全部质量门禁后合入 `main`。不要提前创建 tag。
+
+### 2. 在当前受保护 main 上创建附注 tag
+
+从合并后的干净受保护 `main` 执行：
 
 ```sh
 git checkout main && git pull --ff-only
 npm run release:check
-```
-
-发布 npm（beta 与 rc 必须显式使用 `--tag beta`）：
-
-```sh
-npm publish --access public --tag next      # alpha
-npm publish --access public --tag beta      # beta / rc
-```
-
-打 tag 并创建 GitHub Release：
-
-```sh
 git tag -a vX.Y.Z-alpha.N -m "Arch Lens vX.Y.Z-alpha.N"
 git push origin vX.Y.Z-alpha.N
-gh release create vX.Y.Z-alpha.N --repo spec-alchemy/arch-lens \
-  --title "Arch Lens vX.Y.Z-alpha.N" --generate-notes --prerelease
 ```
 
-发布后核对：
+tag 必须指向该版本的 **release prep commit**（把 `package.json` 版本号改到目标版本的那个提交），并且该提交仍必须是当前受保护 `main` 的 HEAD。工作流会同时校验 tag 名与 `package.json` 版本，以及 tag commit 是否仍等于 `origin/main`。
+
+### 3. 让 GitHub Actions 暂存包
+
+tag push 触发 `.github/workflows/release.yml`。`Stage npm package` job 会：
+
+1. 根据版本号推导 npm dist-tag 并显式传入 `--tag`：alpha 使用 `--tag next`，beta/rc 使用 `--tag beta`，GA 使用 `--tag latest`。
+2. 使用 GitHub OIDC 调用 `npm stage publish`，不读取任何 npm secret。
+3. 将包暂存到 npm，等待维护者批准。
+
+示例工作流输出：
+
+```text
+Staging 0.1.0-alpha.N with npm dist-tag: next
+```
+
+### 4. 检查并批准 staged package
+
+在本地检查暂存版本：
 
 ```sh
+npx npm@11.15.0 stage list @spec-alchemy/arch-lens
+npx npm@11.15.0 stage view <stage-id>
+npx npm@11.15.0 stage download <stage-id>
+```
+
+核对 tarball 内容、版本、dist-tag 和 provenance 后，使用交互式 2FA 批准：
+
+```sh
+npx npm@11.15.0 stage approve <stage-id>
+```
+
+如果检查失败，拒绝暂存包而不是覆盖已发布版本：
+
+```sh
+npx npm@11.15.0 stage reject <stage-id>
+```
+
+### 5. 创建 GitHub Release 并核对
+
+npm 批准成功后，为同一个 tag 创建 GitHub Release：
+
+```sh
+gh release create vX.Y.Z-alpha.N --repo spec-alchemy/arch-lens \
+  --title "Arch Lens vX.Y.Z-alpha.N" --generate-notes --prerelease
 npm view @spec-alchemy/arch-lens dist-tags --json
 ```
 
-tag 必须指向该版本的 **release prep commit**（把 `package.json` 版本号改到目标版本的那个提交），不要打在它之后的任意 HEAD 上。CI 只校验 tag 名与 `package.json` 版本一致，**不校验 tag 的落点**，所以打错位置不会被自动拦住。
-
-GA 发布额外要求：`latest` 指向新版本，GitHub Release 不带 `--prerelease`。
+alpha 应更新 `next`；beta/rc 应更新 `beta`；GA 应更新 `latest` 且 GitHub Release 不带 `--prerelease`。
