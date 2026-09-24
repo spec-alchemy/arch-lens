@@ -9,13 +9,11 @@ import {
   sha256,
   stableJson
 } from "./core.js";
-import { commitChangedPaths, commitsTouchingPath, gitShow } from "./repository.js";
 
 const SHA256 = /^[0-9a-f]{64}$/;
-const FULL_COMMIT = /^[0-9a-f]{40,64}$/;
 const APPROVAL_KEYS = new Set(["schemaVersion", "workflowProtocol", "design", "completion"]);
-const DESIGN_KEYS = new Set(["reviewer", "recordedAt", "digest", "baseCommit", "artifacts"]);
-const COMPLETION_KEYS = new Set(["reviewer", "recordedAt", "digest", "designDigest", "implementationCommit", "reviewedImplementationCommit", "implementationPatchId", "tasksSha256", "verificationSha256"]);
+const DESIGN_KEYS = new Set(["reviewer", "recordedAt", "digest", "baselineDigest", "artifacts"]);
+const COMPLETION_KEYS = new Set(["reviewer", "recordedAt", "digest", "designDigest", "tasksSha256", "verificationSha256"]);
 
 export function emptyApproval() {
   return { schemaVersion: SCHEMA_VERSION, workflowProtocol: WORKFLOW_PROTOCOL, design: [], completion: [] };
@@ -55,7 +53,7 @@ export function validateApprovalValue(value, file) {
     const location = `${file}:design[${index}]`;
     if (!record || typeof record !== "object" || Array.isArray(record)) { diagnostics.push(diag("APPROVAL_RECORD_INVALID", location, "design approval 必须是对象。")); return; }
     rejectUnknownKeys(record, DESIGN_KEYS, location, diagnostics);
-    if (!validIdentity(record.reviewer, record.recordedAt) || !SHA256.test(record.digest ?? "") || !FULL_COMMIT.test(record.baseCommit ?? "") || !Array.isArray(record.artifacts)) diagnostics.push(diag("APPROVAL_RECORD_INVALID", location, "design approval 的 reviewer、recordedAt、digest、baseCommit 或 artifacts 无效。"));
+    if (!validIdentity(record.reviewer, record.recordedAt) || !SHA256.test(record.digest ?? "") || !SHA256.test(record.baselineDigest ?? "") || !Array.isArray(record.artifacts)) diagnostics.push(diag("APPROVAL_RECORD_INVALID", location, "design approval 的 reviewer、recordedAt、digest、baselineDigest 或 artifacts 无效。"));
     for (const artifact of record.artifacts ?? []) if (!artifact || typeof artifact.path !== "string" || !(artifact.sha256 === null || SHA256.test(artifact.sha256 ?? ""))) diagnostics.push(diag("APPROVAL_RECORD_INVALID", location, "design approval artifact 必须包含 path 和 SHA-256/null。"));
   });
   value.completion.forEach((record, index) => {
@@ -63,40 +61,19 @@ export function validateApprovalValue(value, file) {
     if (!record || typeof record !== "object" || Array.isArray(record)) { diagnostics.push(diag("APPROVAL_RECORD_INVALID", location, "completion approval 必须是对象。")); return; }
     rejectUnknownKeys(record, COMPLETION_KEYS, location, diagnostics);
     const hashes = [record.digest, record.designDigest, record.tasksSha256, record.verificationSha256];
-    const commits = [record.implementationCommit, record.reviewedImplementationCommit];
-    const patchIdValid = record.implementationPatchId === undefined || record.implementationPatchId === null || FULL_COMMIT.test(record.implementationPatchId ?? "");
-    if (!validIdentity(record.reviewer, record.recordedAt) || hashes.some((hash) => !SHA256.test(hash ?? "")) || commits.some((commit) => !FULL_COMMIT.test(commit ?? "")) || !patchIdValid) diagnostics.push(diag("APPROVAL_RECORD_INVALID", location, "completion approval 的 reviewer、时间、摘要、commit 或实现内容标识无效。"));
+    if (!validIdentity(record.reviewer, record.recordedAt) || hashes.some((hash) => !SHA256.test(hash ?? ""))) diagnostics.push(diag("APPROVAL_RECORD_INVALID", location, "completion approval 的 reviewer、时间或内容摘要无效。"));
   });
   return diagnostics;
 }
 
-export function designDigest(root, baseCommit, files) {
-  const artifacts = [...new Set(files)].sort((a, b) => a.localeCompare(b, "en")).map((file) => {
-    const target = path.join(root, file);
-    const readable = fs.existsSync(target) && !fs.lstatSync(target).isSymbolicLink() && fs.statSync(target).isFile();
-    return { path: file, sha256: readable ? sha256(fs.readFileSync(target)) : null };
-  });
-  return designDigestFromArtifacts(baseCommit, artifacts);
-}
-
-export function designDigestFromArtifacts(baseCommit, artifacts) {
+export function designDigestFromArtifacts(baselineDigest, artifacts) {
   const stableArtifacts = [...artifacts].sort((a, b) => a.path.localeCompare(b.path, "en"));
-  const manifest = { workflowProtocol: WORKFLOW_PROTOCOL, baseCommit, artifacts: stableArtifacts };
+  const manifest = { workflowProtocol: WORKFLOW_PROTOCOL, baselineDigest, artifacts: stableArtifacts };
   return { digest: sha256(`${stableJson(manifest)}\n`), artifacts: stableArtifacts };
 }
 
 export function completionDigest(value) {
   return sha256(`${stableJson({ workflowProtocol: WORKFLOW_PROTOCOL, ...value })}\n`);
-}
-
-export function findApprovalCommit(root, approvalPath, designDigestValue, allowedPaths) {
-  if (!designDigestValue) return null;
-  for (const commit of commitsTouchingPath(root, approvalPath)) {
-    const content = gitShow(root, commit, approvalPath);
-    if (!content?.toString("utf8").includes(designDigestValue)) continue;
-    if (commitChangedPaths(root, commit).every((file) => allowedPaths.has(file))) return commit;
-  }
-  return null;
 }
 
 function validIdentity(reviewer, recordedAt) {

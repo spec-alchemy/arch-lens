@@ -3,15 +3,15 @@
 ## Arch Lens
 
 <!-- ARCH-LENS:START -->
-本项目使用 Arch Lens draft workflowProtocol 1；Skill 负责业务建模与语义审查，CLI 只提供确定性辅助能力。
+本项目使用 Arch Lens local-first workflowProtocol 2；Skill 负责业务建模与语义审查，CLI 只提供确定性辅助能力。
 
 - 修改建模资产前，Skill 必须先执行 `arch-lens capabilities --json` 并确认协议兼容。
-- 每个 Git worktree 最多一个活动 Change Pack；并行变更使用独立 branch/worktree，目标分支逐个集成。
+- 每个工作区最多一个活动 Change Pack；并行变更使用独立工作区，完成后逐个整合。
 - 已批准的业务模型位于 `.arch-lens/diagrams/**/*.puml`；未批准候选只位于对应 Change Pack 的 `diagrams/` overlay。
 - 持久建模默认一张主视图、通常最多三张；第四张起须逐张论证，并在生成前取得人类明确同意。
-- 每个标准 `.puml` 必须有受版本控制且由锁定受管 PlantUML 生成的同路径 `rendered/**/*.svg`；SVG 是派生审查产物，PlantUML 仍是唯一业务模型。
-- review-model 必须逐张打开当前 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；任一结果不是 PASS 时不得请求设计批准。
-- 任何持久 PlantUML 变更必须进入 Change Pack，并在实现代码前获得人类设计批准、`change apply-model` 和 model-only commit。
+- 标准 `.puml` 的批准绑定内容摘要；SVG 只是审查期间的临时派生产物，PlantUML 仍是唯一业务模型。
+- review-model 必须逐张生成并打开当前候选 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；任一结果不是 PASS 时不得请求设计批准。
+- 任何持久 PlantUML 变更必须进入 Change Pack，并在实现代码前获得人类设计批准和 `change apply-model`。
 - AI 不得自行记录设计或完成批准；实现后必须对照批准模型、代码 diff、测试和 AC 做语义审查。
 - 规范 Skill 位于 `.agents/skills/arch-lens/`。
 <!-- ARCH-LENS:END -->

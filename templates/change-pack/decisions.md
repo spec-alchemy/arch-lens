@@ -20,4 +20,4 @@
 
 ## Visual Review
 
-- [canonical .puml path]: CONCERNS - [TODO: 打开当前标准 SVG，检查标签裁切/重叠、交叉线、密度、边界和阅读顺序；修正后改为 PASS。]
+- [canonical .puml path]: CONCERNS - [TODO: 打开当前候选 SVG，检查标签裁切/重叠、交叉线、密度、边界和阅读顺序；修正后改为 PASS。]

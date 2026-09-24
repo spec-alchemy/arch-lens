@@ -229,7 +229,7 @@ Arch Lens 的目标不是收集架构图，而是降低人理解现状、比较�
 - [ ] proposal 和 decisions 说明问题与取舍，但没有用 Markdown 复制图中的模型。
 - [ ] 每个持久图集变化已由 Change Pack 声明，并可追溯到 AC 和人工批准。
 - [ ] `arch-lens diagrams check` 通过。
-- [ ] 每个 `.puml` 都有锁定受管 PlantUML 生成的标准 SVG，且 CLI 精确 freshness 检查通过。
+- [ ] 每个 add/modify 候选都有锁定受管 PlantUML 生成的 fresh SVG，且已逐图完成视觉审查并记录 PASS。
 - [ ] 已逐张打开当前 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序，并记录 PASS；CONCERNS/FAIL 已完成返工循环。
 
 常见反模式：把 ERD 当领域模型；把页面清单当用例；把函数调用跟踪当时序设计；把代码包图当组件边界；把流程步骤当状态；把系统部署图当所有架构讨论的默认入口。

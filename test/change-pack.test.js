@@ -1,767 +1,186 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { parse, stringify } from "yaml";
+import {
+  assertJsonError,
+  assertJsonSuccess,
+  completeDecisions,
+  completePrinciples,
+  completeProposal,
+  completeTasks,
+  initWorkspace,
+  parseJson,
+  runCli,
+  tempDir,
+  writeCandidate,
+  writeDiagram
+} from "./helpers.js";
 
-const root = path.resolve(import.meta.dirname, "..");
-const cli = path.join(root, "bin", "arch-lens.js");
+test("change new records a local content baseline and one active workspace pack", () => {
+  const cwd = tempDir();
+  initWorkspace(cwd);
+  const created = assertJsonSuccess(runCli(cwd, "change", "new", "local-flow", "--json"));
+  assert.equal(created.workflowProtocol, 2);
+  assert.equal(created.id, "local-flow");
+  assert.match(created.baselineDigest, /^[0-9a-f]{64}$/);
+  const manifest = parse(fs.readFileSync(path.join(cwd, ".arch-lens/changes/local-flow/change.yaml"), "utf8"));
+  assert.equal(manifest.schemaVersion, 2);
+  assert.equal(manifest.workflowProtocol, 2);
+  assert.equal(manifest.baselineDigest, created.baselineDigest);
+  assert.equal(Object.hasOwn(manifest, "baseCommit"), false);
+  assert.ok(manifest.baselineArtifacts.some((item) => item.path === ".arch-lens/principles.md"));
 
-test("packaged Skill routes semantic work through protocol 1 without AI self-approval", () => {
-  const skillRoot = path.join(root, ".agents/skills/arch-lens");
-  const skill = fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8");
-  assert.match(skill, /arch-lens capabilities --json/);
-  assert.match(skill, /workflowProtocol.*1/);
-  assert.match(skill, /note-budget-v1/);
-  assert.match(skill, /没有当前会话中的明确授权，禁止调用 `change record-approval`/);
-  assert.match(skill, /唯一业务模型/);
-  assert.match(skill, /默认只生成或修改一张主视图，通常最多三张/);
-  assert.match(skill, /第四张及以后.*人类明确同意/s);
-  assert.match(skill, /每个 Git worktree 最多一个活动 Change Pack/);
-  assert.match(skill, /受版本控制.*标准.*SVG/s);
-  assert.match(skill, /CONCERNS.*FAIL.*不得请求或记录设计批准/s);
-  assert.match(skill, /不按 AC、测试案例、接口或相近场景逐图生成/);
-  assert.equal(fs.existsSync(path.join(skillRoot, "workflows/change.md")), false);
-  for (const file of ["understand.md", "propose-change.md", "review-model.md", "apply-change.md", "review-implementation.md", "close-change.md"]) {
-    assert.equal(fs.existsSync(path.join(skillRoot, "workflows", file)), true, file);
-  }
-  const contract = fs.readFileSync(path.join(skillRoot, "references/change-pack-contract.md"), "utf8");
-  assert.match(contract, /CLI 只做事实/);
-  assert.match(contract, /tasks\.md.*不绑定/s);
-  assert.match(contract, /避免 commit 哈希自引用/);
-  assert.match(contract, /change refresh-base/);
-  assert.match(contract, /viewBox.*宽高.*宽高比/);
-  const modelingGuide = fs.readFileSync(path.join(skillRoot, "references/modeling-guide.md"), "utf8");
-  assert.match(modelingGuide, /视图预算与复用/);
-  assert.match(modelingGuide, /图种.*选择菜单|不能因为指南列出了六种图就各画一张/s);
-  assert.match(modelingGuide, /NOTE_BUDGET_EXCEEDED/);
-  assert.match(modelingGuide, /noteCount.*noteLineCount.*noteLineShare/s);
-  const propose = fs.readFileSync(path.join(skillRoot, "workflows/propose-change.md"), "utf8");
-  assert.match(propose, /写任何 `.puml` 前.*视图清单/);
-  assert.match(propose, /第四张及以后.*人类明确同意/s);
-  const review = fs.readFileSync(path.join(skillRoot, "workflows/review-model.md"), "utf8");
-  assert.match(review, /对照生成前视图清单检查预算/);
-  assert.match(review, /缺少生成前人类明确同意.*收敛候选/s);
-  assert.match(review, /标题.*没有把图自身标记为 Candidate、Draft、Approved/s);
-  assert.match(review, /NOTE_BUDGET_EXCEEDED.*NOTE_TOO_LONG.*NOTE_LINE_SHARE_HIGH/s);
-  const plantUmlContract = fs.readFileSync(path.join(skillRoot, "references/plantuml-contract.md"), "utf8");
-  assert.match(plantUmlContract, /title.*不得用 `Candidate`、`Draft`、`Approved`.*图自身的工作流阶段/s);
-  assert.match(plantUmlContract, /候选与正式状态只由目录位置和批准记录表达/);
-  const metadata = fs.readFileSync(path.join(skillRoot, "agents/openai.yaml"), "utf8");
-  assert.match(metadata, /\$arch-lens/);
-  assert.match(metadata, /smallest durable PlantUML view set/);
-  const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
-  assert.match(readme, /最少必要的视图/);
-  assert.match(readme, /PlantUML 是唯一可编辑的业务模型/);
-  assert.match(readme, /设计批准和完成验收都来自人类明确决定/);
+  assertJsonError(runCli(cwd, "change", "new", "second", "--json"), /已有活动 Change Pack/);
+  assertJsonError(runCli(cwd, "change", "new", "Upper_Case", "--json"), /kebab-case/);
+  const listed = assertJsonSuccess(runCli(cwd, "change", "status", "--json"));
+  assert.equal(listed.changes.length, 1);
 });
 
-test("change new creates a fixed protocol 1 pack and rejects duplicate IDs", () => {
-  const cwd = protocolRepo();
-  const created = run(cwd, "change", "new", "retry-policy", "--json");
-  assert.equal(created.status, 0, created.stderr || created.stdout);
-  const payload = JSON.parse(created.stdout);
-  assert.equal(payload.workflowProtocol, 1);
-  assert.equal(payload.id, "retry-policy");
-  const pack = path.join(cwd, ".arch-lens/changes/retry-policy");
-  assert.deepEqual(fs.readdirSync(pack).sort(), ["approval.yaml", "change.yaml", "decisions.md", "diagrams", "proposal.md", "tasks.md", "verification.md"]);
-  assert.equal(parse(fs.readFileSync(path.join(pack, "change.yaml"), "utf8")).baseCommit, git(cwd, "rev-parse", "HEAD"));
-  assert.deepEqual(parse(fs.readFileSync(path.join(pack, "approval.yaml"), "utf8")).design, []);
+test("design approval requires fresh candidate SVG and a PASS visual review", () => {
+  const cwd = tempDir();
+  const { id, diagramPath } = prepareCandidate(cwd, "design-gate");
+  completeProposal(path.join(packRoot(cwd, id), "proposal.md"), id);
+  completeDecisions(path.join(packRoot(cwd, id), "decisions.md"), diagramPath);
 
-  assertJsonError(run(cwd, "change", "new", "Upper_Case", "--json"), /kebab-case/);
-  assertJsonError(run(cwd, "change", "new", "retry-policy", "--json"), /已有活动 Change Pack/);
-  const status = run(cwd, "change", "status", "--json");
-  assert.equal(status.status, 0, status.stderr);
-  const statusPayload = JSON.parse(status.stdout);
-  assert.deepEqual(statusPayload.changes.map((item) => item.id), ["retry-policy"]);
-  assert.deepEqual(statusPayload.changes[0].source, []);
-  const detailed = statusFor(cwd, "retry-policy");
-  assert.deepEqual(detailed.plantUml, { checked: false, valid: null });
+  const beforeRender = runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json");
+  assertJsonError(beforeRender, /尚不满足设计批准的机械前置条件/);
+  assert.ok(parseJson(beforeRender).diagnostics.some((item) => item.code === "SVG_MISSING"));
+
+  assertJsonSuccess(runCli(cwd, "change", "render", id, "--json"));
+  const approved = assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json"));
+  assert.equal(approved.stage, "design");
+  assert.match(approved.digest, /^[0-9a-f]{64}$/);
+  assert.equal(statusFor(cwd, id).designApproval.state, "current");
+
+  const decisions = path.join(packRoot(cwd, id), "decisions.md");
+  fs.writeFileSync(decisions, fs.readFileSync(decisions, "utf8").replace(": PASS -", ": CONCERNS -"));
+  assert.equal(statusFor(cwd, id).designApproval.state, "stale");
 });
 
-test("change validate, diff and render cover isolated add, modify and delete overlays", () => {
-  const cwd = protocolRepo();
-  writeDiagram(cwd, "existing/modify.domain.puml", "Before");
-  writeDiagram(cwd, "existing/delete.domain.puml", "DeleteMe");
-  commitAll(cwd, "baseline diagrams");
-  assert.equal(run(cwd, "change", "new", "reshape-domain", "--json").status, 0);
-
-  writeCandidate(cwd, "reshape-domain", "existing/modify.domain.puml", "After");
-  writeCandidate(cwd, "reshape-domain", "new/add.domain.puml", "Added");
-  preparePack(cwd, "reshape-domain", [
-    { path: ".arch-lens/diagrams/existing/modify.domain.puml", operation: "modify" },
-    { path: ".arch-lens/diagrams/existing/delete.domain.puml", operation: "delete" },
-    { path: ".arch-lens/diagrams/new/add.domain.puml", operation: "add" }
-  ]);
-
-  const fake = fakePlantUml();
-  const validated = run(cwd, "change", "validate", "reshape-domain", "--json", { ARCH_LENS_PLANTUML: fake });
-  assert.equal(validated.status, 0, validated.stderr || validated.stdout);
-  const validation = JSON.parse(validated.stdout);
-  assert.deepEqual(validation.source.map((item) => item.path), [
-    ".arch-lens/diagrams/existing/modify.domain.puml",
-    ".arch-lens/diagrams/new/add.domain.puml"
-  ]);
-  assert.ok(validation.source.every((item) => item.noteCount === 0 && item.noteLineShare === 0));
-  const detailed = statusFor(cwd, "reshape-domain");
-  assert.deepEqual(detailed.source, validation.source);
-  const diffed = run(cwd, "change", "diff", "reshape-domain", "--json");
-  assert.equal(diffed.status, 0, diffed.stderr || diffed.stdout);
-  const diff = JSON.parse(diffed.stdout);
-  assert.deepEqual(diff.files.map((item) => item.operation), ["modify", "delete", "add"]);
-  assert.match(diff.patch, /modify\.domain\.puml/);
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/changes/reshape-domain/rendered")), true);
-
-  const rendered = run(cwd, "change", "render", "reshape-domain", "--json", { ARCH_LENS_PLANTUML: fake });
-  assert.equal(rendered.status, 0, rendered.stderr || rendered.stdout);
-  const view = JSON.parse(rendered.stdout);
-  assert.equal(fs.existsSync(path.join(cwd, view.output, "existing/modify.domain.svg")), true);
-  assert.equal(fs.existsSync(path.join(cwd, view.output, "new/add.domain.svg")), true);
-  assert.equal(fs.existsSync(path.join(cwd, view.output, "existing/delete.domain.svg")), false);
-  const before = fs.readFileSync(path.join(cwd, view.output, "existing/modify.domain.svg"));
-
-  const failed = run(cwd, "change", "render", "reshape-domain", "--json", {
-    ARCH_LENS_PLANTUML: fake,
-    FAKE_PLANTUML_WRONG_SVG_COUNT: "1"
-  });
-  assertJsonDiagnostic(failed, "PLANTUML_OUTPUT_PROTOCOL");
-  assert.deepEqual(fs.readFileSync(path.join(cwd, view.output, "existing/modify.domain.svg")), before);
-
-  const manifestPath = path.join(cwd, ".arch-lens/changes/reshape-domain/change.yaml");
-  const manifest = parse(fs.readFileSync(manifestPath, "utf8"));
-  manifest.diagrams = manifest.diagrams.filter((item) => item.path !== ".arch-lens/diagrams/new/add.domain.puml");
-  fs.writeFileSync(manifestPath, stringify(manifest, { lineWidth: 0 }));
-  fs.writeFileSync(path.join(cwd, ".arch-lens/changes/reshape-domain/decisions.md"), decisionsText(manifest.diagrams));
-  fs.rmSync(path.join(cwd, ".arch-lens/changes/reshape-domain/diagrams/new/add.domain.puml"));
-  fs.rmSync(path.join(cwd, ".arch-lens/changes/reshape-domain/rendered/new/add.domain.svg"));
-  const refreshed = run(cwd, "change", "render", "reshape-domain", "--json", { ARCH_LENS_PLANTUML: fake });
-  assert.equal(refreshed.status, 0, refreshed.stderr || refreshed.stdout);
-  assert.equal(fs.existsSync(path.join(cwd, view.output, "new/add.domain.svg")), false);
-});
-
-test("change validate and status expose note warnings without failing the pack", () => {
-  const cwd = protocolRepo();
-  const id = "note-budget";
-  assert.equal(run(cwd, "change", "new", id, "--json").status, 0);
-  const relative = "notes/budget.domain.puml";
-  const target = path.join(cwd, ".arch-lens/changes", id, "diagrams", relative);
-  const rendered = path.join(cwd, ".arch-lens/changes", id, "rendered", relative.replace(/\.puml$/i, ".svg"));
-  const content = `@startuml
-' arch-lens: type=domain
-' arch-lens: question=Which note policy is visible?
-title Note budget
-class Order
-note right
-line one
-line two
-line three
-line four
-end note
-note left: short one
-note left: short two
-note left: short three
-@enduml
-`;
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  fs.mkdirSync(path.dirname(rendered), { recursive: true });
-  fs.writeFileSync(target, content);
-  fs.writeFileSync(rendered, fakeSvg(content));
-  preparePack(cwd, id, [{ path: ".arch-lens/diagrams/notes/budget.domain.puml", operation: "add" }]);
-
-  const validated = run(cwd, "change", "validate", id, "--json", { ARCH_LENS_PLANTUML: fakePlantUml() });
-  assert.equal(validated.status, 0, validated.stderr || validated.stdout);
-  const validation = JSON.parse(validated.stdout);
-  assert.equal(validation.valid, true);
-  assert.equal(validation.source[0].noteCount, 4);
-  assert.equal(validation.source[0].maxNoteContentLines, 4);
-  assert.ok(validation.diagnostics.some((item) => item.code === "NOTE_BUDGET_EXCEEDED" && item.severity === "warning"));
-  assert.ok(validation.diagnostics.some((item) => item.code === "NOTE_TOO_LONG" && item.severity === "warning"));
-  const status = statusFor(cwd, id);
-  assert.deepEqual(status.source, validation.source);
-  assert.ok(status.diagnostics.some((item) => item.code === "NOTE_LINE_SHARE_HIGH" && item.severity === "warning"));
-});
-
-test("a worktree rejects a second active Change Pack before writing assets", () => {
-  const cwd = protocolRepo();
-  assert.equal(run(cwd, "change", "new", "first-change", "--json").status, 0);
-  writeCandidate(cwd, "first-change", "shared/domain.puml", "Shared");
-  preparePack(cwd, "first-change", [{ path: ".arch-lens/diagrams/shared/domain.puml", operation: "add" }]);
-  const rejected = run(cwd, "change", "new", "second-change", "--json");
-  assertJsonError(rejected, /独立 branch\/worktree/);
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/changes/second-change")), false);
-});
-
-test("change new requires no active pack and a clean worktree", () => {
-  const cwd = protocolRepo();
-  assert.equal(run(cwd, "change", "new", "first-change", "--json").status, 0);
-  writeCandidate(cwd, "first-change", "one/domain.puml", "One");
-  preparePack(cwd, "first-change", [{ path: ".arch-lens/diagrams/one/domain.puml", operation: "add" }]);
-  assertJsonError(run(cwd, "change", "new", "second-change", "--json"), /已有活动 Change Pack/);
-
-  const clean = protocolRepo();
-  fs.writeFileSync(path.join(clean, "implementation.js"), "export {};\n");
-  assertJsonError(run(clean, "change", "new", "third-change", "--json"), /implementation\.js/);
-  fs.rmSync(path.join(clean, "implementation.js"));
-  writeDiagram(clean, "unapproved/domain.puml", "Unapproved");
-  assertJsonError(run(clean, "change", "new", "third-change", "--json"), /unapproved\/domain\.puml/);
-});
-
-test("delete-only Change Packs can be approved and applied without candidate files", () => {
-  const cwd = protocolRepo();
-  writeDiagram(cwd, "obsolete/domain.puml", "Obsolete");
-  commitAll(cwd, "add obsolete diagram");
-  assert.equal(run(cwd, "change", "new", "remove-obsolete", "--json").status, 0);
-  preparePack(cwd, "remove-obsolete", [{ path: ".arch-lens/diagrams/obsolete/domain.puml", operation: "delete" }]);
-  const rejected = run(cwd, "change", "apply-model", "remove-obsolete", "--json");
-  assertJsonError(rejected, /design approval/);
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/obsolete/domain.puml")), true);
-  const approved = run(cwd, "change", "record-approval", "remove-obsolete", "--stage", "design", "--reviewer", "Alice", "--json", { ARCH_LENS_PLANTUML: fakePlantUml() });
-  assert.equal(approved.status, 0, approved.stderr || approved.stdout);
-  const applied = run(cwd, "change", "apply-model", "remove-obsolete", "--json");
-  assert.equal(applied.status, 0, applied.stderr || applied.stdout);
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/obsolete/domain.puml")), false);
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/rendered/obsolete/domain.svg")), false);
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/.gitkeep")), true);
-  assert.equal(statusFor(cwd, "remove-obsolete").designApproval.state, "current");
-});
-
-test("change validation rejects undeclared, traversing, mismatched and symlinked diagram entries", () => {
-  const cwd = protocolRepo();
-  assert.equal(run(cwd, "change", "new", "secure-model", "--json").status, 0);
-  writeCandidate(cwd, "secure-model", "declared/domain.puml", "Declared");
-  preparePack(cwd, "secure-model", [{ path: ".arch-lens/diagrams/declared/domain.puml", operation: "add" }]);
-  const fake = fakePlantUml();
-
-  const packRoot = path.join(cwd, ".arch-lens/changes/secure-model");
-  fs.writeFileSync(path.join(packRoot, "extra.md"), "unexpected\n");
-  assertJsonDiagnostic(run(cwd, "change", "validate", "secure-model", "--json", { ARCH_LENS_PLANTUML: fake }), "ARTIFACT_UNKNOWN");
-  fs.rmSync(path.join(packRoot, "extra.md"));
-
-  const approvalPath = path.join(packRoot, "approval.yaml");
-  fs.writeFileSync(approvalPath, "schemaVersion: 1\nworkflowProtocol: 2\ndesign: []\ncompletion: []\n");
-  assertJsonDiagnostic(run(cwd, "change", "validate", "secure-model", "--json", { ARCH_LENS_PLANTUML: fake }), "APPROVAL_SCHEMA_INVALID");
-  fs.writeFileSync(approvalPath, "schemaVersion: 1\nworkflowProtocol: 1\ndesign: not-an-array\ncompletion: []\n");
-  assertJsonDiagnostic(run(cwd, "change", "validate", "secure-model", "--json", { ARCH_LENS_PLANTUML: fake }), "APPROVAL_SCHEMA_INVALID");
-  fs.writeFileSync(approvalPath, "schemaVersion: 1\nworkflowProtocol: 1\ndesign: []\ncompletion: []\n");
-
-  const tasksPath = path.join(packRoot, "tasks.md");
-  const tasksSource = fs.readFileSync(tasksPath);
-  fs.rmSync(tasksPath);
-  const missingStatus = statusFor(cwd, "secure-model");
-  assert.equal(missingStatus.structurallyValid, false);
-  assert.ok(missingStatus.diagnostics.some((item) => item.code === "ARTIFACT_REQUIRED"));
-  fs.writeFileSync(tasksPath, tasksSource);
-
-  const proposalPath = path.join(packRoot, "proposal.md");
-  const proposalSource = fs.readFileSync(proposalPath);
-  const externalProposal = path.join(tempDir(), "proposal.md");
-  fs.writeFileSync(externalProposal, "outside data\n");
-  fs.rmSync(proposalPath);
-  fs.symlinkSync(externalProposal, proposalPath);
-  assertJsonDiagnostic(run(cwd, "change", "validate", "secure-model", "--json", { ARCH_LENS_PLANTUML: fake }), "ARTIFACT_SYMLINK");
-  fs.rmSync(proposalPath);
-  fs.writeFileSync(proposalPath, proposalSource);
-
-  const decisionsPath = path.join(packRoot, "decisions.md");
-  fs.appendFileSync(decisionsPath, "\n## D001: Duplicate\n\n### Context\nX\n\n### Decision\nX\n\n### Alternatives\nX\n\n### Consequences\nX\n");
-  assertJsonDiagnostic(run(cwd, "change", "validate", "secure-model", "--json", { ARCH_LENS_PLANTUML: fake }), "DECISION_DUPLICATE");
-  fs.writeFileSync(decisionsPath, decisionsText());
-
-  writeCandidate(cwd, "secure-model", "undeclared/domain.puml", "Undeclared");
-  assertJsonDiagnostic(run(cwd, "change", "validate", "secure-model", "--json", { ARCH_LENS_PLANTUML: fake }), "UNDECLARED_CANDIDATE_DIAGRAM");
-  fs.rmSync(path.join(cwd, ".arch-lens/changes/secure-model/diagrams/undeclared/domain.puml"));
-
-  const manifestPath = path.join(cwd, ".arch-lens/changes/secure-model/change.yaml");
-  const manifest = parse(fs.readFileSync(manifestPath, "utf8"));
-  manifest.workflowProtocol = 2;
-  fs.writeFileSync(manifestPath, stringify(manifest));
-  assertJsonDiagnostic(run(cwd, "change", "validate", "secure-model", "--json", { ARCH_LENS_PLANTUML: fake }), "CHANGE_WORKFLOW_PROTOCOL");
-  manifest.workflowProtocol = 1;
-  manifest.diagrams = [{ path: ".arch-lens/diagrams/../../outside.puml", operation: "add", extra: true }];
-  fs.writeFileSync(manifestPath, stringify(manifest));
-  const traversal = run(cwd, "change", "validate", "secure-model", "--json", { ARCH_LENS_PLANTUML: fake });
-  assertJsonDiagnostic(traversal, "DIAGRAM_PATH_INVALID");
-  assertJsonDiagnostic(traversal, "UNKNOWN_SCHEMA_KEY");
-  assert.equal(run(cwd, "change", "status", "secure-model", "--json").status, 0);
-
-  manifest.diagrams = [{ path: ".arch-lens/diagrams/declared/domain.puml", operation: "modify" }];
-  fs.writeFileSync(manifestPath, stringify(manifest));
-  assertJsonDiagnostic(run(cwd, "change", "validate", "secure-model", "--json", { ARCH_LENS_PLANTUML: fake }), "DIAGRAM_OPERATION_MISMATCH");
-
-  const external = path.join(tempDir(), "external.puml");
-  fs.writeFileSync(external, "@startuml\nclass External\n@enduml\n");
-  const linked = path.join(cwd, ".arch-lens/changes/secure-model/diagrams/linked.puml");
-  fs.symlinkSync(external, linked);
-  manifest.diagrams = [{ path: ".arch-lens/diagrams/linked.puml", operation: "add" }];
-  fs.writeFileSync(manifestPath, stringify(manifest));
-  assertJsonDiagnostic(run(cwd, "change", "validate", "secure-model", "--json", { ARCH_LENS_PLANTUML: fake }), "DIAGRAM_SYMLINK");
-});
-
-test("change render refuses a symlinked generated-output directory", () => {
-  const cwd = protocolRepo();
-  assert.equal(run(cwd, "change", "new", "safe-render", "--json").status, 0);
-  writeCandidate(cwd, "safe-render", "safe/domain.puml", "Safe");
-  preparePack(cwd, "safe-render", [{ path: ".arch-lens/diagrams/safe/domain.puml", operation: "add" }]);
-  const external = tempDir();
-  fs.rmSync(path.join(cwd, ".arch-lens/changes/safe-render/rendered"), { recursive: true, force: true });
-  fs.symlinkSync(external, path.join(cwd, ".arch-lens/changes/safe-render/rendered"));
-  assertJsonDiagnostic(run(cwd, "change", "render", "safe-render", "--json", { ARCH_LENS_PLANTUML: fakePlantUml() }), "ARTIFACT_SYMLINK");
-  assert.deepEqual(fs.readdirSync(external), []);
-});
-
-test("design digest, model-only commit, evidence, completion approval and archive form a closed loop", () => {
-  const cwd = protocolRepo();
-  assert.equal(run(cwd, "change", "new", "notification-policy", "--json").status, 0);
-  writeCandidate(cwd, "notification-policy", "notification/policy.state.puml", "Policy");
-  preparePack(cwd, "notification-policy", [{ path: ".arch-lens/diagrams/notification/policy.state.puml", operation: "add" }], { openQuestion: true });
-  const fake = fakePlantUml();
-
-  assertJsonDiagnostic(run(cwd, "change", "record-approval", "notification-policy", "--stage", "design", "--reviewer", "Alice", "--json", { ARCH_LENS_PLANTUML: fake }), "OPEN_QUESTIONS_REMAIN");
-  preparePack(cwd, "notification-policy", [{ path: ".arch-lens/diagrams/notification/policy.state.puml", operation: "add" }]);
-  const approved = run(cwd, "change", "record-approval", "notification-policy", "--stage", "design", "--reviewer", "Alice", "--json", { ARCH_LENS_PLANTUML: fake });
-  assert.equal(approved.status, 0, approved.stderr || approved.stdout);
-  const designDigest = JSON.parse(approved.stdout).digest;
-  assert.match(designDigest, /^[0-9a-f]{64}$/);
-  const approval = parse(fs.readFileSync(path.join(cwd, ".arch-lens/changes/notification-policy/approval.yaml"), "utf8"));
-  assert.ok(approval.design.at(-1).artifacts.some((item) => item.path === ".arch-lens/rendered/notification/policy.state.svg" && /^[0-9a-f]{64}$/.test(item.sha256)));
-  assert.equal(statusFor(cwd, "notification-policy").designApproval.modelApplied, false);
-
-  const pack = path.join(cwd, ".arch-lens/changes/notification-policy");
-  const tasks = path.join(pack, "tasks.md");
-  const proposal = path.join(pack, "proposal.md");
-  const principles = path.join(cwd, ".arch-lens/principles.md");
-  const originalTasks = fs.readFileSync(tasks, "utf8");
-  fs.writeFileSync(tasks, originalTasks.replace("[ ]", "[x]"));
-  assert.equal(statusFor(cwd, "notification-policy").designApproval.state, "current");
-  fs.writeFileSync(tasks, originalTasks);
-  fs.appendFileSync(proposal, "\nChanged after approval.\n");
-  assert.equal(statusFor(cwd, "notification-policy").designApproval.state, "stale");
-  fs.writeFileSync(proposal, proposalText(false));
-  fs.appendFileSync(principles, "\nChanged principle.\n");
-  assert.equal(statusFor(cwd, "notification-policy").designApproval.state, "stale");
-  fs.writeFileSync(principles, principlesText());
-  assert.equal(statusFor(cwd, "notification-policy").designApproval.state, "current");
-  const approvedSvg = path.join(pack, "rendered/notification/policy.state.svg");
-  const approvedSvgBytes = fs.readFileSync(approvedSvg);
-  fs.appendFileSync(approvedSvg, "\n");
-  assert.equal(statusFor(cwd, "notification-policy").designApproval.state, "stale");
-  fs.writeFileSync(approvedSvg, approvedSvgBytes);
-  assert.equal(statusFor(cwd, "notification-policy").designApproval.state, "current");
-  fs.rmSync(approvedSvg);
-  assertJsonDiagnostic(run(cwd, "change", "apply-model", "notification-policy", "--json"), "SVG_MISSING");
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/notification/policy.state.puml")), false);
-  fs.writeFileSync(approvedSvg, approvedSvgBytes);
-
-  const applied = run(cwd, "change", "apply-model", "notification-policy", "--json");
-  assert.equal(applied.status, 0, applied.stderr || applied.stdout);
-  assert.equal(fs.existsSync(path.join(pack, "diagrams/notification/policy.state.puml")), false);
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/notification/policy.state.puml")), true);
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/rendered/notification/policy.state.svg")), true);
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/.gitkeep")), false);
-  assert.equal(statusFor(cwd, "notification-policy").structurallyValid, true);
-  assert.equal(statusFor(cwd, "notification-policy").designApproval.modelApplied, true);
-  commitAll(cwd, "model notification policy");
-  const afterModel = statusFor(cwd, "notification-policy");
-  assert.match(afterModel.designApproval.modelCommit, /^[0-9a-f]{40}$/);
-  const evidence = run(cwd, "change", "evidence", "notification-policy", "--json");
-  assert.equal(evidence.status, 0, evidence.stderr || evidence.stdout);
-  assert.equal(JSON.parse(evidence.stdout).modelCommit, afterModel.designApproval.modelCommit);
-
-  fs.writeFileSync(path.join(cwd, "implementation.txt"), "implemented\n");
-  commitAll(cwd, "implement notification policy");
-  const implementationCommit = git(cwd, "rev-parse", "HEAD");
-  assertJsonDiagnostic(run(cwd, "change", "record-approval", "notification-policy", "--stage", "completion", "--reviewer", "Bob", "--json", { ARCH_LENS_PLANTUML: fake }), "TASKS_INCOMPLETE");
-  fs.writeFileSync(tasks, originalTasks.replace("[ ]", "[x]"));
-  const implementationPatchId = patchIdOf(cwd, implementationCommit);
-  fs.writeFileSync(path.join(pack, "verification.md"), verificationText(designDigest, implementationCommit, implementationPatchId));
-  assertJsonError(run(cwd, "change", "record-approval", "notification-policy", "--stage", "completion", "--reviewer", "Bob", "--json", { ARCH_LENS_PLANTUML: fake }), /必须已提交且工作区干净/);
-  commitAll(cwd, "verify notification policy");
-
-  const completed = run(cwd, "change", "record-approval", "notification-policy", "--stage", "completion", "--reviewer", "Bob", "--json", { ARCH_LENS_PLANTUML: fake });
-  assert.equal(completed.status, 0, completed.stderr || completed.stdout);
-  const completion = JSON.parse(completed.stdout);
-  assert.equal(completion.implementationCommit, git(cwd, "rev-parse", "HEAD"));
-  assert.equal(statusFor(cwd, "notification-policy").archiveEligible, true);
-
-  fs.writeFileSync(path.join(cwd, "unrelated.txt"), "dirty\n");
-  assert.equal(statusFor(cwd, "notification-policy").archiveEligible, false);
-  assertJsonError(run(cwd, "change", "archive", "notification-policy", "--json"), /只允许 approval\.yaml/);
-  fs.rmSync(path.join(cwd, "unrelated.txt"));
-  assert.equal(statusFor(cwd, "notification-policy").archiveEligible, true);
-
-  const archived = run(cwd, "change", "archive", "notification-policy", "--json");
-  assert.equal(archived.status, 0, archived.stderr || archived.stdout);
-  const archivedPath = path.join(cwd, JSON.parse(archived.stdout).archivedPath);
-  assert.equal(fs.existsSync(archivedPath), true);
-  assert.equal(fs.existsSync(pack), false);
-  assert.match(git(cwd, "status", "--porcelain", "--untracked-files=all"), /\.arch-lens\/changes\/archive/);
-
-  const before = JSON.parse(run(cwd, "change", "archive-evidence", "notification-policy", "--json").stdout);
-  assert.equal(before.completion.implementationPatchId, implementationPatchId);
-  assert.equal(before.completion.reviewedImplementationCommitReachable, true);
-  assert.equal(before.contentIdentity.matched, true);
-  assert.equal(before.contentIdentity.matchedCommit, implementationCommit);
-
-  commitAll(cwd, "archive notification policy");
-  const branch = git(cwd, "rev-parse", "--abbrev-ref", "HEAD");
-  git(cwd, "checkout", "-q", "-b", "advance", afterModel.designApproval.modelCommit);
-  fs.writeFileSync(path.join(cwd, "advance.txt"), "advance\n");
-  commitAll(cwd, "advance target branch");
-  git(cwd, "checkout", "-q", branch);
-  git(cwd, "rebase", "-q", "advance");
-
-  const after = JSON.parse(run(cwd, "change", "archive-evidence", "notification-policy", "--json").stdout);
-  assert.equal(after.completion.reviewedImplementationCommitReachable, false, "rebase rewrites the recorded commit identity");
-  assert.equal(after.contentIdentity.matched, true, "content identity still matches the integrated implementation");
-  assert.notEqual(after.contentIdentity.matchedCommit, implementationCommit);
-  assert.equal(patchIdOf(cwd, after.contentIdentity.matchedCommit), implementationPatchId);
-
-  assertJsonError(run(cwd, "change", "archive-evidence", "missing-pack", "--json"), /找不到已归档 Change Pack/);
-  assertJsonError(run(cwd, "change", "archive-evidence", "notification-policy", "--ref", "no-such-ref", "--json"), /无法解析 Git 引用/);
-});
-
-test("implementation content identity survives rebase and is sensitive to content changes", () => {
-  const cwd = gitRepo();
-  git(cwd, "checkout", "-q", "-b", "work");
-  fs.writeFileSync(path.join(cwd, "policy.txt"), "one\n");
-  commitAll(cwd, "implement policy");
-  const original = git(cwd, "rev-parse", "HEAD");
-  const originalIdentity = patchIdOf(cwd, original);
-
-  git(cwd, "checkout", "-q", "-b", "advance", `${original}~1`);
-  fs.writeFileSync(path.join(cwd, "target.txt"), "target\n");
-  commitAll(cwd, "advance target branch");
-  git(cwd, "checkout", "-q", "work");
-  git(cwd, "rebase", "-q", "advance");
-  const rebased = git(cwd, "rev-parse", "HEAD");
-  assert.notEqual(rebased, original);
-  assert.equal(patchIdOf(cwd, rebased), originalIdentity);
-
-  fs.writeFileSync(path.join(cwd, "policy.txt"), "two\n");
-  commitAll(cwd, "change implementation content");
-  assert.notEqual(patchIdOf(cwd, "HEAD"), originalIdentity);
-});
-
-test("legacy multiple-active worktrees block status, validate, approval and apply", () => {
-  const cwd = protocolRepo();
-  assert.equal(run(cwd, "change", "new", "first-change", "--json").status, 0);
-  const first = path.join(cwd, ".arch-lens/changes/first-change");
-  const second = path.join(cwd, ".arch-lens/changes/second-change");
-  fs.cpSync(first, second, { recursive: true });
-  const secondManifest = parse(fs.readFileSync(path.join(second, "change.yaml"), "utf8"));
-  secondManifest.id = "second-change";
-  fs.writeFileSync(path.join(second, "change.yaml"), stringify(secondManifest, { lineWidth: 0 }));
-
-  for (const args of [
-    ["change", "status", "--json"],
-    ["change", "validate", "first-change", "--json"],
-    ["change", "record-approval", "first-change", "--stage", "design", "--reviewer", "Alice", "--json"],
-    ["change", "apply-model", "first-change", "--json"]
-  ]) assertJsonDiagnostic(run(cwd, ...args), "MULTIPLE_ACTIVE_CHANGES");
-});
-
-test("parallel Change Packs are allowed only in independent linked worktrees", () => {
-  const cwd = protocolRepo();
-  assert.equal(run(cwd, "change", "new", "main-change", "--json").status, 0);
-  const linkedParent = tempDir();
-  const linked = path.join(linkedParent, "linked");
-  git(cwd, "worktree", "add", "-q", "-b", "feature/parallel-change", linked, "HEAD");
-  const created = run(linked, "change", "new", "parallel-change", "--json");
-  assert.equal(created.status, 0, created.stderr || created.stdout);
-  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/changes/parallel-change")), false);
-  assert.equal(fs.existsSync(path.join(linked, ".arch-lens/changes/parallel-change")), true);
-});
-
-test("model baseline changes require explicit refresh and make approval stale", () => {
-  const cwd = protocolRepo();
-  assert.equal(run(cwd, "change", "new", "baseline-aware", "--json").status, 0);
-  writeCandidate(cwd, "baseline-aware", "candidate/domain.puml", "Candidate");
-  preparePack(cwd, "baseline-aware", [{ path: ".arch-lens/diagrams/candidate/domain.puml", operation: "add" }]);
-  const approved = run(cwd, "change", "record-approval", "baseline-aware", "--stage", "design", "--reviewer", "Alice", "--json");
-  assert.equal(approved.status, 0, approved.stderr || approved.stdout);
-  git(cwd, "add", ".arch-lens/changes/baseline-aware");
-  git(cwd, "commit", "-qm", "record draft approval");
-
-  writeDiagram(cwd, "external/domain.puml", "External");
-  git(cwd, "add", ".arch-lens/diagrams/external/domain.puml", ".arch-lens/rendered/external/domain.svg");
-  git(cwd, "commit", "-qm", "integrate external model");
-  const stale = statusFor(cwd, "baseline-aware");
-  assert.equal(stale.baseline.state, "stale");
-  assert.equal(stale.designApproval.state, "stale");
-  assert.ok(stale.diagnostics.some((item) => item.code === "MODEL_BASELINE_STALE"));
-
-  const refreshed = run(cwd, "change", "refresh-base", "baseline-aware", "--json");
-  assert.equal(refreshed.status, 0, refreshed.stderr || refreshed.stdout);
-  assert.deepEqual(JSON.parse(refreshed.stdout).changedBaselinePaths, [".arch-lens/diagrams/external/domain.puml"]);
-  const current = statusFor(cwd, "baseline-aware");
-  assert.equal(current.baseline.state, "current");
-  assert.equal(current.designApproval.state, "stale");
-  assertJsonError(run(cwd, "change", "refresh-base", "baseline-aware", "--json"), /已经是当前 HEAD/);
-});
-
-test("design approval requires a PASS visual review for every add or modify SVG", () => {
-  const cwd = protocolRepo();
-  assert.equal(run(cwd, "change", "new", "visual-gate", "--json").status, 0);
-  const diagrams = [{ path: ".arch-lens/diagrams/visual/domain.puml", operation: "add" }];
-  writeCandidate(cwd, "visual-gate", "visual/domain.puml", "Visual");
-  preparePack(cwd, "visual-gate", diagrams);
-  const decisions = path.join(cwd, ".arch-lens/changes/visual-gate/decisions.md");
-  fs.writeFileSync(decisions, decisionsText());
-  assertJsonDiagnostic(run(cwd, "change", "record-approval", "visual-gate", "--stage", "design", "--reviewer", "Alice", "--json"), "VISUAL_REVIEW_NOT_PASS");
-  fs.writeFileSync(decisions, decisionsText(diagrams).replace(": PASS -", ": CONCERNS -"));
-  assertJsonDiagnostic(run(cwd, "change", "record-approval", "visual-gate", "--stage", "design", "--reviewer", "Alice", "--json"), "VISUAL_REVIEW_NOT_PASS");
-  fs.writeFileSync(decisions, decisionsText(diagrams));
-  const approved = run(cwd, "change", "record-approval", "visual-gate", "--stage", "design", "--reviewer", "Alice", "--json");
-  assert.equal(approved.status, 0, approved.stderr || approved.stdout);
-});
-
-function protocolRepo() {
-  const cwd = gitRepo();
-  const initialized = run(cwd, "init", "--json");
-  assert.equal(initialized.status, 0, initialized.stderr || initialized.stdout);
-  fs.writeFileSync(path.join(cwd, ".arch-lens/principles.md"), principlesText());
-  commitAll(cwd, "initialize protocol 1");
-  return cwd;
-}
-
-function preparePack(cwd, id, diagrams, options = {}) {
-  const root = path.join(cwd, ".arch-lens/changes", id);
-  const manifestPath = path.join(root, "change.yaml");
-  const manifest = parse(fs.readFileSync(manifestPath, "utf8"));
-  manifest.diagrams = diagrams;
-  fs.writeFileSync(manifestPath, stringify(manifest, { lineWidth: 0 }));
-  fs.writeFileSync(path.join(root, "proposal.md"), proposalText(options.openQuestion));
-  fs.writeFileSync(path.join(root, "decisions.md"), decisionsText(diagrams));
-  fs.writeFileSync(path.join(root, "tasks.md"), "# Implementation Tasks\n\n- [ ] T001 [AC-001] Implement and test the approved behavior.\n");
-  fs.writeFileSync(path.join(root, "verification.md"), pendingVerificationText());
-}
-
-function proposalText(openQuestion) {
-  return `# Change Proposal
-
-## Problem And Evidence
-
-Observed behavior conflicts with the product requirement.
-
-## Goals
-
-Make the approved outcome explicit and testable.
-
-## Non-goals
-
-Do not redesign unrelated capabilities.
-
-## Acceptance Criteria
-
-- AC-001: The approved behavior is implemented and verified.
-
-## Assumptions
-
-The current Git baseline is representative.
-
-## Open Questions
-
-- [${openQuestion ? " " : "x"}] Q001: Confirm the intended policy. ${openQuestion ? "" : "Resolved by reviewer."}
-`;
-}
-
-function decisionsText(diagrams = []) {
-  const reviews = diagrams.filter((item) => item.operation !== "delete").map((item) => `- ${item.path}: PASS - Current SVG checked for clipping/overlap, crossings, density, boundaries, and reading order.`).join("\n");
-  return `# Design Decisions
-
-## D001: Keep one explicit responsibility
-
-### Context
-
-The change requires a stable ownership boundary.
-
-### Decision
-
-Use the responsibility shown in the PlantUML candidate.
-
-### Alternatives
-
-Distribute the behavior across callers.
-
-### Consequences
-
-The boundary is easier to review and test.
-
-## Visual Review
-
-${reviews || "No add/modify diagrams require visual review."}
-`;
-}
-
-function pendingVerificationText() {
-  return `# Implementation Verification
-
-<!-- arch-lens: semantic-review=pending -->
-<!-- arch-lens: design-digest=pending -->
-<!-- arch-lens: implementation-commit=pending -->
-
-## Evidence
-
-Evidence will be recorded after implementation.
-
-## Acceptance Results
-
-- AC-001: NOT-RUN - Implementation has not started.
-
-## Semantic Review
-
-Pending implementation review.
-
-## Residual Risks
-
-Pending implementation review.
-`;
-}
-
-function verificationText(designDigest, implementationCommit, implementationPatchId) {
-  return `# Implementation Verification
+test("local-first flow applies only PlantUML, binds completion to content and archives without Git", () => {
+  const cwd = tempDir();
+  const { id, diagramPath } = prepareCandidate(cwd, "local-complete");
+  const root = packRoot(cwd, id);
+  assertJsonSuccess(runCli(cwd, "change", "render", id, "--json"));
+  const design = assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json"));
+
+  const applied = assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
+  assert.deepEqual(applied.applied, [{ path: diagramPath, operation: "add" }]);
+  assert.equal(fs.existsSync(path.join(cwd, diagramPath)), true);
+  assert.equal(fs.existsSync(path.join(root, "diagrams")), false);
+  assert.equal(fs.existsSync(path.join(root, "rendered")), false);
+  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/rendered", `${path.basename(diagramPath, ".puml")}.svg`)), false);
+  assert.equal(statusFor(cwd, id).designApproval.state, "current");
+
+  fs.writeFileSync(path.join(root, "tasks.md"), "# Implementation Tasks\n\n- [x] T001 [AC-001] Implement the local workflow.\n");
+  fs.writeFileSync(path.join(root, "verification.md"), `# Implementation Verification
 
 <!-- arch-lens: semantic-review=pass -->
-<!-- arch-lens: design-digest=${designDigest} -->
-<!-- arch-lens: implementation-commit=${implementationCommit} -->
-<!-- arch-lens: implementation-patch-id=${implementationPatchId} -->
+<!-- arch-lens: design-digest=${design.digest} -->
 
 ## Evidence
 
-The real project tests and code diff were reviewed successfully.
+- npm test passed.
 
 ## Acceptance Results
 
-- AC-001: PASS - The implementation and tests demonstrate the approved behavior.
+- AC-001: PASS - The local workflow completed without Git.
 
 ## Semantic Review
 
-The implementation preserves the approved goal, rule ownership and responsibility boundary.
+The implementation matches the approved local-first model.
 
 ## Residual Risks
 
 No known residual semantic risk.
-`;
+`);
+  const completion = assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "completion", "--reviewer", "BeaconSage", "--json"));
+  assert.equal(completion.stage, "completion");
+  const evidence = assertJsonSuccess(runCli(cwd, "change", "evidence", id, "--json"));
+  assert.equal(evidence.designApproval.state, "current");
+  assert.equal(evidence.completionApproval.state, "current");
+  assert.equal(Object.hasOwn(evidence, "currentHead"), false);
+  assert.equal(Object.hasOwn(evidence.completionApproval, "implementationCommit"), false);
+  assert.deepEqual(evidence.acceptanceResults, [{ id: "AC-001", status: "PASS" }]);
+
+  const archived = assertJsonSuccess(runCli(cwd, "change", "archive", id, "--json"));
+  assert.match(archived.archivedPath, /\.arch-lens\/changes\/archive\/\d{4}-\d{2}-\d{2}-local-complete$/);
+  assert.equal(fs.existsSync(root), false);
+  assertJsonError(runCli(cwd, "change", "new", id, "--json"), /已归档/);
+});
+
+test("canonical model changes make approval stale and refresh-baseline restores only the content baseline", () => {
+  const cwd = tempDir();
+  const baselineDiagram = writeDiagram(cwd, "baseline.puml", "class Baseline");
+  const { id, diagramPath } = prepareCandidate(cwd, "refresh-baseline", "class Candidate");
+  assertJsonSuccess(runCli(cwd, "change", "render", id, "--json"));
+  assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json"));
+
+  fs.writeFileSync(baselineDiagram, fs.readFileSync(baselineDiagram, "utf8").replace("class Baseline", "class ChangedBaseline"));
+  const stale = statusFor(cwd, id);
+  assert.equal(stale.baseline.state, "stale");
+  assert.equal(stale.designApproval.state, "stale");
+  assert.deepEqual(stale.baseline.changedPaths, [".arch-lens/diagrams/baseline.puml"]);
+
+  const refreshed = assertJsonSuccess(runCli(cwd, "change", "refresh-baseline", id, "--json"));
+  assert.notEqual(refreshed.baselineDigest, refreshed.previousBaselineDigest);
+  const current = statusFor(cwd, id);
+  assert.equal(current.baseline.state, "current");
+  assert.equal(current.designApproval.state, "stale");
+  assert.equal(fs.existsSync(path.join(packRoot(cwd, id), "diagrams", path.basename(diagramPath))), true);
+});
+
+test("delete operations remove canonical .puml and preserve Git independence", () => {
+  const cwd = tempDir();
+  writeDiagram(cwd, "obsolete.puml", "class Obsolete");
+  const { id, diagramPath } = prepareCandidate(cwd, "delete-flow", "class Replacement");
+  const manifestFile = path.join(packRoot(cwd, id), "change.yaml");
+  const manifest = parse(fs.readFileSync(manifestFile, "utf8"));
+  manifest.diagrams.unshift({ path: ".arch-lens/diagrams/obsolete.puml", operation: "delete" });
+  fs.writeFileSync(manifestFile, stringify(manifest, { lineWidth: 0 }));
+  completeDecisions(path.join(packRoot(cwd, id), "decisions.md"), diagramPath);
+  assertJsonSuccess(runCli(cwd, "change", "render", id, "--json"));
+  assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json"));
+  assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
+  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/obsolete.puml")), false);
+  assert.equal(fs.existsSync(path.join(cwd, diagramPath)), true);
+});
+
+test("template and public commands reject Git-era verification fields", () => {
+  const cwd = tempDir();
+  initWorkspace(cwd);
+  assertJsonSuccess(runCli(cwd, "change", "new", "contract", "--json"));
+  const root = packRoot(cwd, "contract");
+  const verification = fs.readFileSync(path.join(root, "verification.md"), "utf8");
+  assert.doesNotMatch(verification, /implementation-commit|implementation-patch-id/);
+  assert.match(verification, /design-digest=pending/);
+  const help = runCli(cwd, "change", "--help");
+  assert.doesNotMatch(help.stdout, /archive-evidence|refresh-base(?!line)|Git|commit/i);
+});
+
+function prepareCandidate(cwd, id, body = "class Candidate") {
+  initWorkspace(cwd);
+  completePrinciples(cwd);
+  assertJsonSuccess(runCli(cwd, "change", "new", id, "--json"));
+  const root = packRoot(cwd, id);
+  const diagramPath = ".arch-lens/diagrams/local-flow.puml";
+  writeCandidate(cwd, id, "local-flow.puml", body);
+  const manifestFile = path.join(root, "change.yaml");
+  const manifest = parse(fs.readFileSync(manifestFile, "utf8"));
+  manifest.diagrams = [{ path: diagramPath, operation: "add" }];
+  fs.writeFileSync(manifestFile, stringify(manifest, { lineWidth: 0 }));
+  completeProposal(path.join(root, "proposal.md"), id);
+  completeDecisions(path.join(root, "decisions.md"), diagramPath);
+  completeTasks(path.join(root, "tasks.md"));
+  return { id, diagramPath };
 }
 
-function principlesText() {
-  return `# Project Modeling Principles
-
-## Purpose
-
-Make business decisions easy for humans to review.
-
-## Modeling Boundary
-
-PlantUML is the only business model.
-
-## Decision Principles
-
-Responsibilities must remain explicit.
-
-## Quality Gates
-
-Humans approve design and completion.
-`;
-}
-
-function writeDiagram(cwd, relative, className) {
-  const target = path.join(cwd, ".arch-lens/diagrams", relative);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  const content = `@startuml\n' arch-lens: type=domain\n' arch-lens: question=Which concept owns this policy?\ntitle Policy domain\nclass ${className}\n@enduml\n`;
-  fs.writeFileSync(target, content);
-  const rendered = path.join(cwd, ".arch-lens/rendered", relative.replace(/\.puml$/i, ".svg"));
-  fs.mkdirSync(path.dirname(rendered), { recursive: true });
-  fs.writeFileSync(rendered, fakeSvg(content));
-}
-
-function writeCandidate(cwd, id, relative, className) {
-  const target = path.join(cwd, ".arch-lens/changes", id, "diagrams", relative);
-  fs.mkdirSync(path.dirname(target), { recursive: true });
-  const content = `@startuml\n' arch-lens: type=domain\n' arch-lens: question=Which concept owns this policy?\ntitle Policy domain\nclass ${className}\n@enduml\n`;
-  fs.writeFileSync(target, content);
-  const rendered = path.join(cwd, ".arch-lens/changes", id, "rendered", relative.replace(/\.puml$/i, ".svg"));
-  fs.mkdirSync(path.dirname(rendered), { recursive: true });
-  fs.writeFileSync(rendered, fakeSvg(content));
-}
-
-function patchIdOf(cwd, commit) {
-  const shown = spawnSync("git", ["show", "--no-ext-diff", "--no-color", "--format=", commit], { cwd, encoding: "utf8" });
-  assert.equal(shown.status, 0, shown.stderr);
-  const result = spawnSync("git", ["patch-id", "--stable"], { cwd, encoding: "utf8", input: shown.stdout });
-  assert.equal(result.status, 0, result.stderr);
-  return result.stdout.trim().split(/\s+/)[0];
+function packRoot(cwd, id) {
+  return path.join(cwd, ".arch-lens/changes", id);
 }
 
 function statusFor(cwd, id) {
-  const result = run(cwd, "change", "status", id, "--json");
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  return JSON.parse(result.stdout);
-}
-
-function fakePlantUml() {
-  const target = path.join(tempDir(), "plantuml-fake.mjs");
-  fs.writeFileSync(target, `#!/usr/bin/env node
-const args = process.argv.slice(2);
-if (process.env.PLANTUML_SECURITY_PROFILE !== "SANDBOX" || !args.includes("-headless")) process.exit(9);
-if (args.includes("-version")) { console.log("PlantUML version 1.2026.6"); process.exit(0); }
-let source = "";
-for await (const chunk of process.stdin) source += chunk;
-if (args.includes("-syntax")) { if (source.includes("SYNTAX_ERROR")) process.exit(200); console.log("CLASS"); process.exit(0); }
-const diagrams = [...source.matchAll(/@startuml\\b[\\s\\S]*?@enduml/gi)].map((match) => match[0]);
-const rendered = process.env.FAKE_PLANTUML_WRONG_SVG_COUNT && diagrams.length > 1 ? diagrams.slice(0, -1) : diagrams;
-for (const diagram of rendered) process.stdout.write('<svg xmlns="http://www.w3.org/2000/svg" width="800px" height="400px" viewBox="0 0 800 400"><text>' + diagram.length + '</text></svg>');
-`);
-  fs.chmodSync(target, 0o755);
-  return target;
-}
-
-function gitRepo() {
-  const cwd = tempDir();
-  git(cwd, "init", "-q");
-  git(cwd, "config", "user.email", "arch-lens@example.test");
-  git(cwd, "config", "user.name", "Arch Lens Test");
-  fs.writeFileSync(path.join(cwd, "seed.txt"), "seed\n");
-  commitAll(cwd, "seed");
-  return cwd;
-}
-
-function commitAll(cwd, message) {
-  git(cwd, "add", ".");
-  git(cwd, "commit", "-qm", message);
-}
-
-function git(cwd, ...args) {
-  const result = spawnSync("git", args, { cwd, encoding: "utf8" });
-  assert.equal(result.status, 0, result.stderr);
-  return result.stdout.trim();
-}
-
-function run(cwd, ...raw) {
-  const env = typeof raw.at(-1) === "object" ? raw.pop() : {};
-  const managed = env.ARCH_LENS_TEST_MANAGED_PLANTUML ?? env.ARCH_LENS_PLANTUML ?? fakePlantUml();
-  return spawnSync(process.execPath, [cli, ...raw], { cwd, encoding: "utf8", env: { ...process.env, ARCH_LENS_TEST_MODE: "1", ARCH_LENS_TEST_SKIP_RUNTIME: "1", ARCH_LENS_TEST_MANAGED_PLANTUML: managed, ...env } });
-}
-
-function fakeSvg(content) {
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="800px" height="400px" viewBox="0 0 800 400"><text>${content.trimEnd().length}</text></svg>`;
-}
-
-function assertJsonError(result, pattern) {
-  assert.equal(result.status, 1, result.stderr || result.stdout);
-  const payload = JSON.parse(result.stdout);
-  assert.equal(payload.schemaVersion, 1);
-  assert.match(payload.error, pattern);
-}
-
-function assertJsonDiagnostic(result, code) {
-  assert.equal(result.status, 1, result.stderr || result.stdout);
-  const payload = JSON.parse(result.stdout);
-  assert.ok(payload.diagnostics.some((item) => item.code === code), JSON.stringify(payload));
-}
-
-function tempDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), "arch-lens-change-test-"));
+  return assertJsonSuccess(runCli(cwd, "change", "status", id, "--json"));
 }

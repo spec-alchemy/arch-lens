@@ -49,7 +49,12 @@ test("公开基线只呈现当前产品入口并保留合法历史归档", () =>
     }
   };
   visit(path.join(root, ".arch-lens", "diagrams"));
-  assert.equal(diagrams.length, 5);
+  assert.equal(diagrams.length, 3);
+  assert.deepEqual(diagrams.map((file) => file.split(path.sep).join("/")).sort(), [
+    ".arch-lens/diagrams/local-first-lifecycle.activity.puml",
+    ".arch-lens/diagrams/local-first-responsibilities.component.puml",
+    ".arch-lens/diagrams/product-goals.use-case.puml"
+  ]);
 });
 
 test("npm 预览发布保持 scoped 包、next 标签和稳定 CLI 名称", () => {
