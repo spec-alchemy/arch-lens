@@ -142,6 +142,7 @@ export function refreshBaseline(cwd, id) {
   const workspace = requireProtocolWorkspace(cwd);
   requireSingleActiveChange(workspace, id);
   const pack = readPack(workspace, id);
+  if (isPackPromoted(pack)) throw new Error("候选模型已经提升，不能重新刷新本次变更的基线；如需改变模型，请另建 Change Pack。");
   const next = baselineSnapshot(workspace);
   const previousBaselineDigest = pack.change?.baselineDigest ?? null;
   if (next.digest === previousBaselineDigest) throw new Error("baselineDigest 已经与当前 principles 和 canonical .puml 一致，无需刷新。");

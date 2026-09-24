@@ -95,6 +95,11 @@ test("install-agent resolves project scope from a nested workspace directory and
   const invalid = runCli(cwd, "install-agent", "codex", "--scope", "workspace");
   assert.equal(invalid.status, 1);
   assert.match(invalid.stderr, /project 或 global/);
+
+  const home = tempDir("arch-lens-home-");
+  const global = runCli(cwd, "install-agent", "codex", "--global", { HOME: home });
+  assert.equal(global.status, 0, global.stderr || global.stdout);
+  assert.equal(fs.existsSync(path.join(home, ".agents/skills/arch-lens/SKILL.md")), true);
 });
 
 test("diagram list, check and render work without a canonical SVG cache", () => {
@@ -112,6 +117,8 @@ test("diagram list, check and render work without a canonical SVG cache", () => 
   assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/rendered")), false);
 
   const rendered = assertJsonSuccess(runCli(cwd, "diagrams", "render", "--json"));
+  assert.equal(rendered.mode, "workspace-cache");
+  assert.equal(Object.hasOwn(rendered, "standardMirror"), false);
   assert.equal(rendered.rendered.length, 1);
   assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/rendered/orders/order.svg")), true);
   fs.rmSync(path.join(cwd, ".arch-lens/rendered"), { recursive: true, force: true });
@@ -146,6 +153,8 @@ test("explicit render is atomic, outside sources and preserves project bytes", (
   const before = fs.readFileSync(source);
   const output = path.join(tempDir(), "views");
   const rendered = assertJsonSuccess(runCli(cwd, "diagrams", "render", "--output", output, "--json"));
+  assert.equal(rendered.mode, "explicit");
+  assert.equal(Object.hasOwn(rendered, "standardMirror"), false);
   assert.equal(rendered.rendered.length, 1);
   assert.equal(fs.existsSync(path.join(output, "model.svg")), true);
   assert.deepEqual(fs.readFileSync(source), before);

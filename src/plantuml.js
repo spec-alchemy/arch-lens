@@ -74,12 +74,13 @@ export function renderDiagrams(cwd, requestedFiles = [], output) {
   const diagnostics = inspection.diagnostics;
   if (diagnostics.some(isError)) throw operationError("PlantUML 离线资源策略检查失败。", diagnostics);
   const fullMirror = !requestedFiles || requestedFiles.length === 0;
-  const standardMirror = !output;
+  const managedOnly = !output;
+  const mode = managedOnly ? "workspace-cache" : "explicit";
   if (records.length === 0) {
     if (fullMirror) fs.rmSync(outputRoot, { recursive: true, force: true });
-    return { output: outputRoot, standardMirror, rendered: [], source: inspection.facts, svg: [], diagnostics };
+    return { output: outputRoot, mode, rendered: [], source: inspection.facts, svg: [], diagnostics };
   }
-  const svgs = renderDiagramRecords(workspace.root, records, diagnostics, { managedOnly: standardMirror, inspectPolicy: false });
+  const svgs = renderDiagramRecords(workspace.root, records, diagnostics, { managedOnly, inspectPolicy: false });
   const pending = records.map((record, index) => {
     const relative = path.relative(workspace.diagramsRoot, record.file).replace(/\.puml$/i, ".svg");
     const target = path.join(outputRoot, relative);
@@ -88,7 +89,7 @@ export function renderDiagrams(cwd, requestedFiles = [], output) {
   });
   const facts = pending.map((item) => svgFacts(item.svg, item.output, workspace.root));
   diagnostics.push(...facts.flatMap((item) => item.diagnostics));
-  if (diagnostics.some(isError)) throw operationError("PlantUML 生成的 SVG 不符合标准镜像合同。", diagnostics.sort(compareDiagnostics));
+  if (diagnostics.some(isError)) throw operationError("PlantUML 生成的 SVG 不符合渲染合同。", diagnostics.sort(compareDiagnostics));
   if (fullMirror) {
     replaceDirectoryAtomically(outputRoot, (temporary) => {
       for (const item of pending) {
@@ -101,7 +102,7 @@ export function renderDiagrams(cwd, requestedFiles = [], output) {
   }
   return {
     output: outputRoot,
-    standardMirror,
+    mode,
     rendered: pending.map(({ source, output: renderedOutput }) => ({ source, output: renderedOutput })),
     source: inspection.facts,
     svg: facts,
@@ -145,10 +146,10 @@ export function validateSvgMirror(root, records, { renderedRoot = null, fullMirr
 
   if (renderedRoot && fs.existsSync(renderedRoot)) {
     if (fs.lstatSync(renderedRoot).isSymbolicLink() || !fs.statSync(renderedRoot).isDirectory()) {
-      diagnostics.push(diagnostic("error", "SVG_MIRROR_INVALID", relativePosix(root, renderedRoot), null, "标准 SVG 镜像必须是真实目录且不得是符号链接。"));
+      diagnostics.push(diagnostic("error", "SVG_MIRROR_INVALID", relativePosix(root, renderedRoot), null, "候选 SVG 目录必须是真实目录且不得是符号链接。"));
     } else if (fullMirror) {
       for (const file of discoverSvgFiles(renderedRoot, root, diagnostics)) {
-        if (!expectedPaths.has(path.resolve(file))) diagnostics.push(diagnostic("error", "SVG_ORPHAN", relativePosix(root, file), null, "标准 SVG 没有对应的 .puml 源文件。"));
+        if (!expectedPaths.has(path.resolve(file))) diagnostics.push(diagnostic("error", "SVG_ORPHAN", relativePosix(root, file), null, "审查 SVG 没有对应的 .puml 源文件。"));
       }
     }
   }
@@ -157,11 +158,11 @@ export function validateSvgMirror(root, records, { renderedRoot = null, fullMirr
     const svgPath = record.svgFile;
     const relative = relativePosix(root, svgPath);
     if (!fs.existsSync(svgPath)) {
-      diagnostics.push(diagnostic("error", "SVG_MISSING", relative, null, `缺少 ${record.path} 对应的标准 SVG。`));
+      diagnostics.push(diagnostic("error", "SVG_MISSING", relative, null, `缺少 ${record.path} 对应的候选审查 SVG。`));
       continue;
     }
     if (fs.lstatSync(svgPath).isSymbolicLink() || !fs.statSync(svgPath).isFile()) {
-      diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relative, null, "标准 SVG 必须是普通文件且不得是符号链接。"));
+      diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relative, null, "审查 SVG 必须是普通文件且不得是符号链接。"));
       continue;
     }
     const fact = svgFacts(fs.readFileSync(svgPath), svgPath, root);
@@ -178,7 +179,7 @@ export function validateSvgMirror(root, records, { renderedRoot = null, fullMirr
       const fresh = actualSource && expectedSource
         ? actualSource === expectedSource
         : actual.equals(expected[index]);
-      if (!fresh) diagnostics.push(diagnostic("error", "SVG_STALE", relativePosix(root, record.svgFile), null, `标准 SVG 与 ${record.path} 的 PlantUML 源指纹不一致。`));
+      if (!fresh) diagnostics.push(diagnostic("error", "SVG_STALE", relativePosix(root, record.svgFile), null, `审查 SVG 与 ${record.path} 的 PlantUML 源指纹不一致。`));
     });
   }
   return { facts, diagnostics: diagnostics.sort(compareDiagnostics) };
@@ -200,9 +201,9 @@ export function svgFacts(svg, file, root = process.cwd()) {
   const height = parseSvgLength(attributes.height);
   const ratioWidth = width ?? viewBox?.width ?? null;
   const ratioHeight = height ?? viewBox?.height ?? null;
-  if (!viewBox || width === null || height === null) diagnostics.push(diagnostic("error", "SVG_DIMENSIONS_MISSING", label, null, "标准 SVG 必须声明可解析的 viewBox、width 和 height。"));
+  if (!viewBox || width === null || height === null) diagnostics.push(diagnostic("error", "SVG_DIMENSIONS_MISSING", label, null, "SVG 必须声明可解析的 viewBox、width 和 height。"));
   if ((viewBox && (viewBox.width <= 0 || viewBox.height <= 0)) || (width !== null && width <= 0) || (height !== null && height <= 0)) {
-    diagnostics.push(diagnostic("error", "SVG_DIMENSIONS_NON_POSITIVE", label, null, "标准 SVG 的 viewBox、width 和 height 必须为正数。"));
+    diagnostics.push(diagnostic("error", "SVG_DIMENSIONS_NON_POSITIVE", label, null, "SVG 的 viewBox、width 和 height 必须为正数。"));
   }
   const aspectRatio = ratioWidth !== null && ratioHeight > 0 ? ratioWidth / ratioHeight : null;
   if (aspectRatio !== null && (aspectRatio > 4 || aspectRatio < 0.25)) diagnostics.push(diagnostic("warning", "SVG_ASPECT_RATIO_EXTREME", label, null, `SVG 宽高比 ${formatNumber(aspectRatio)} 较极端，需要人工检查阅读顺序和密度。`));
@@ -387,11 +388,11 @@ function discoverSvgFiles(root, workspaceRoot, diagnostics) {
   const visit = (directory) => {
     for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name, "en"))) {
       const target = path.join(directory, entry.name);
-      if (entry.isSymbolicLink()) diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relativePosix(workspaceRoot, target), null, "标准 SVG 镜像不得包含符号链接。"));
+      if (entry.isSymbolicLink()) diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relativePosix(workspaceRoot, target), null, "SVG 目录不得包含符号链接。"));
       else if (entry.isDirectory()) visit(target);
       else if (entry.isFile() && entry.name.toLowerCase().endsWith(".svg")) files.push(target);
-      else if (entry.isFile()) diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relativePosix(workspaceRoot, target), null, "标准 SVG 镜像只允许 .svg 文件。"));
-      else diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relativePosix(workspaceRoot, target), null, "标准 SVG 镜像不允许特殊文件。"));
+      else if (entry.isFile()) diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relativePosix(workspaceRoot, target), null, "审查 SVG 目录只允许 .svg 文件。"));
+      else diagnostics.push(diagnostic("error", "SVG_FILE_INVALID", relativePosix(workspaceRoot, target), null, "审查 SVG 目录不允许特殊文件。"));
     }
   };
   visit(root);
