@@ -73,6 +73,7 @@ test("local-first flow applies only PlantUML, binds completion to content and ar
   assert.equal(fs.existsSync(path.join(root, "rendered")), false);
   assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/rendered", `${path.basename(diagramPath, ".puml")}.svg`)), false);
   assert.equal(statusFor(cwd, id).designApproval.state, "current");
+  assertJsonError(runCli(cwd, "change", "refresh-baseline", id, "--json"), /已经提升/);
 
   fs.writeFileSync(path.join(root, "tasks.md"), "# Implementation Tasks\n\n- [x] T001 [AC-001] Implement the local workflow.\n");
   fs.writeFileSync(path.join(root, "verification.md"), `# Implementation Verification

@@ -12,6 +12,7 @@ test("公开基线只呈现当前产品入口并保留合法历史归档", () =>
   const principles = read(".arch-lens/principles.md");
   const archive = path.join(root, ".arch-lens", "changes", "archive");
   const archiveEntries = fs.readdirSync(archive).sort();
+  assert.equal(fs.existsSync(path.join(root, ".arch-lens", "rendered")), false);
 
   assert.match(principles, /## Purpose/);
   assert.match(principles, /## Modeling Boundary/);
