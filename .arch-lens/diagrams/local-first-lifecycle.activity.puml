@@ -1,67 +1,74 @@
 @startuml
 ' arch-lens: type=activity
-' arch-lens: question=在无 Git 依赖的单一 local-first 模式下，人类与 AI 如何从内容基线走到设计批准、完成验收和本地归档？
-title Local-first 内容工作流
+' arch-lens: question=在无 Git 依赖的单一 local-first 模式下，人类与 AI 如何从内容基线走到设计批准、可重复修订、完成验收和本地归档？
+title Local-first 内容与修订工作流
 
 |AI Agent|
 start
 :运行 capabilities，确认 workflowProtocol 2;
 :发现或初始化 .arch-lens/;
-:读取 principles.md、canonical .puml 与 Change Pack;
+:读取 principles.md、canonical C 与 Change Pack;
 
 |CLI|
-:计算 baselineDigest\nprinciples.md + canonical .puml;
-:change new 记录内容基线;
+:change new 记录 baseline B = C;
 
 |AI Agent|
-:写 proposal、decisions 与候选 .puml;
-|CLI|
-:change render 生成临时候选 SVG;
-:重渲染并核对候选 SVG fresh;
+:编写 proposal、decisions、tasks 与 desired D 候选;
 
-if (任一候选 SVG stale 或缺失？) then ([是])
-  |AI Agent|
-  :修正候选 .puml;
-  stop
+|CLI|
+if (desired 图内容与上一份 design approval 逐图一致？) then ([是])
+  :复用已有视觉证据;
 else ([否])
-  |AI Agent|
-  :逐图打开 SVG 并记录 PASS/CONCERNS/FAIL;
+  :change render 整组候选 SVG;
+  :校验整组 SVG fresh;
 endif
 
-if (任一视觉结论不是 PASS？) then ([是])
+|AI Agent|
+:逐图语义与视觉审查;
+:在 decisions.md 记录 PASS/CONCERNS/FAIL;
+
+|人类审查者|
+:审查 diff、SVG、理由与风险;
+if (明确批准设计？) then ([否])
   |AI Agent|
-  :精简模型或重组候选;
+  :修改候选或证据并重新审查;
   stop
-else ([否])
-  |人类审查者|
-  :审查 diff、SVG、理由与风险;
-  if (明确批准设计？) then ([否])
-    |AI Agent|
-    :修改候选并重新审查;
-    stop
-  else ([是])
-    |CLI|
-    :记录 designDigest\nprinciples + change.yaml + proposal + decisions + .puml;
-    :apply-model 原子提升 .puml\n并清理临时候选 SVG;
-  endif
+else ([是])
+  |CLI|
+  :记录 design approval\n绑定 B、change.yaml、proposal、decisions 与 D;
+  :apply-model 幂等 reconcile C -> D\n并清理候选 overlay 与临时 SVG;
 endif
 
 |AI Agent|
 :实施代码、测试与语义一致性审查;
 :填写 tasks.md 与 verification.md;
-|CLI|
-:验证 AC 全 PASS、tasks 完成、semantic-review=pass;
-|人类审查者|
-:审查实现证据与残余风险;
-if (明确验收？) then ([否])
-  |AI Agent|
-  :修正实现或证据;
-  stop
-else ([是])
+
+while (尚未明确完成验收？) is ([是])
   |CLI|
-  :计算 completionDigest\ndesignDigest + tasks + verification;
-  :记录 completion approval;
-  :本地归档 Change Pack;
-  stop
-endif
+  :验证 AC 全 PASS、tasks 完成、semantic-review=pass;
+  |AI Agent|
+  if (设计需要修订？) then ([是])
+    :按 Change Pack 合同准备修订\n必要时 refresh baseline;
+    |CLI|
+    if (desired 声明图发生变化？) then ([是])
+      :change render 整组 desired SVG;
+      |AI Agent|
+      :逐图审查并记录 PASS;
+    else ([否])
+    endif
+    |人类审查者|
+    :重新批准 design;
+    |CLI|
+    :apply-model 再次幂等 reconcile C -> D;
+  else ([否])
+  endif
+  |人类审查者|
+  :审查实现证据与残余风险;
+endwhile ([否])
+
+|CLI|
+:计算 completionDigest;
+:记录 completion approval;
+:本地归档 Change Pack;
+stop
 @enduml

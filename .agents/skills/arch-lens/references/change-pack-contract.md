@@ -1,96 +1,83 @@
 # Change Pack 合同
 
-CLI 只做事实：解析本地文件、计算内容摘要、检查 PlantUML、渲染临时 SVG、机械记录人工决定并原子归档。CLI 不评价语义，不读取 Git，也不自动批准。
+本文件是 Change Pack、内容基线、批准、视觉门禁、reconcile 与 delete 语义的唯一规范来源。CLI 只报告本地文件事实；Skill 负责建模、审查和执行顺序。
 
-## 工作区与活动变更
+## 四类事实与派生状态
 
-- 工作区根由当前目录向上查找最近的 `.arch-lens/` 得到。
-- `init` 直接在调用目录创建协议资产，不要求 Git 仓库、HEAD 或干净状态。
-- `.arch-lens/` 是否被 Git 跟踪不影响任何命令；它可以被整体 gitignore。
-- 每个工作区最多一个活动 Change Pack。并行变更使用独立工作区，完成后逐个整合。
+- `B` baseline：创建 Change Pack 时记录的 principles 与 canonical `.puml` 内容事实。
+- `D` desired：每张声明图希望最终存在的字节；不存在时表示 desired absent。
+- `A` approval history：`approval.yaml` 中按时间追加的人类 design/completion 决定。
+- `C` canonical：当前 `.arch-lens/diagrams/**/*.puml` 的真实内容。
 
-## 固定文件
+不持久化 `applied`、`promoted`、`revision` 或逐图状态。`C == D`、effective operation、`modelApplied` 和 diff 都从四类事实派生。
 
-每个活动包包含：
+`change.yaml` 字段保持不变。`add` 与 `modify` 都表示 desired present；`delete` 表示 desired absent。原始 operation 不决定生命周期。仓库仍默认最多三张持久图。
 
-```text
-change.yaml
-proposal.md
-decisions.md
-tasks.md
-approval.yaml
-verification.md
-diagrams/**/*.puml       # 可选 add/modify overlay
-rendered/**/*.svg        # render 生成的临时视觉审查材料
-```
+## Desired 解析顺序
 
-`change.yaml` 只保存协议版本、ID、本地内容基线和 diagram operations。候选 overlay 的 `.puml` 路径必须与 canonical 路径一致；delete 不保留占位图。
+对每个合法声明：
 
-> 候选 SVG 是审查期间的可删除派生材料，不是归档、摘要、Git 审计或长期状态的一部分。
+1. `delete`：desired absent。
+2. 存在真实 overlay `.puml`：desired 为 overlay 字节。
+3. 无 overlay，且上一份 design approval 绑定当前 canonical：desired 为当前 canonical 字节。
+4. 其他情况：`DIAGRAM_DESIRED_UNRESOLVED`，不得推断为 absent，也不得写入 canonical。
+
+同一路径重复、未知 operation、非法路径、symlink 和特殊文件继续失败。delete 不保留占位 overlay。
 
 ## 内容基线
 
-`change.yaml` 的 `baselineDigest` 绑定排序后的：
+`baselineDigest` 绑定创建时的 `.arch-lens/principles.md` 与全部 canonical `.puml`。`baselineArtifacts` 保存同一路径集合和 SHA-256。
 
-- `.arch-lens/principles.md`
-- 全部 canonical `.arch-lens/diagrams/**/*.puml`
+freshness 只回答：
 
-`baselineArtifacts` 保存同一路径集合与 SHA-256，供报告变化路径。canonical 内容变化后，基线变为 stale：
+- principles 是否变化；
+- 是否有未声明 canonical 变化；
+- 已声明 canonical 是否属于 baseline 或任一历史 design approval manifest。
 
-```sh
-arch-lens change refresh-baseline <id>
-```
+新 overlay、整包 apply 状态和 proposal/decisions 变化都不影响 freshness。已声明 canonical 若既不属于 baseline，也不属于历史 approval manifest，则为第三种未知内容，必须失败。
 
-该命令只显式刷新本地内容基线，不合并候选、不评价语义，并使既有设计批准 stale。不得自动刷新。它在 `apply-model` 后仍然有效：若新增或修改候选 overlay，`baselineDigest` 会先变 stale，再显式刷新到当前 canonical 基底。
+`refresh-baseline` 只在存在外部 principles/canonical drift 时执行 `B := C`，使 design approval stale，不自动批准、不合并 overlay。apply 后或仅 proposal/decisions/overlay 变化时无需 refresh。
 
-## 三类内容摘要
+## 三类摘要
 
-- `baselineDigest`：principles + 全部 canonical `.puml`。
-- `designDigest`：baselineDigest + change.yaml + proposal + decisions + 声明的候选/已提升 `.puml` 内容。
-- `completionDigest`：designDigest + tasks.md + verification.md 内容。
+- `baselineDigest`：principles + canonical `.puml`。
+- `designDigest`：baselineDigest + change.yaml + proposal + decisions + 逐图 desired bytes；desired absent 记为 null。
+- `completionDigest`：designDigest + tasks + verification。
 
-摘要只依赖 UTF-8 文件字节、稳定 JSON 和 SHA-256。SVG、mtime、提交哈希、patch-id 和 worktree 状态均不进入摘要。
+摘要只依赖 UTF-8 文件字节、稳定 JSON 和 SHA-256。SVG、mtime、Git 身份和 worktree 状态不进入摘要。
 
-## 设计和 apply-model
+## 视觉证据与设计批准
 
-设计批准要求：
+- 整组 desired 与上一份 design approval 逐图一致时，可复用已有视觉证据。
+- 任一张图的 desired 字节变化时，整组 present 图必须 fresh render，并逐图在 decisions.md 记录 `PASS`。
+- delete 没有 SVG。
+- 设计批准前清除 `[TODO]`、解决全部 Q，并使 `designDigest` current。
+- 人类在当前会话明确批准后，才可运行 `record-approval --stage design`。
 
-1. 设计批准前清除 proposal、decisions、tasks 和 principles 中的 `[TODO]`。
-2. 全部未决问题已解决。
-3. 每个新增或发生变化的 add/modify 候选都有当前新鲜 SVG；如果图与上一份 design approval 的 SHA-256 逐字节一致，可复用已有视觉审查，不要求重新 render。
-4. decisions.md 为每张候选记录 `PASS`；fresh SVG 必须已实际打开并检查裁切、重叠、交叉线、密度、边界和阅读顺序。
-5. `designDigest` current。
+## apply-model 与修订
 
-人类批准后记录：
+`apply-model` 是幂等 reconcile：
 
-```sh
-arch-lens change record-approval <id> --stage design --reviewer <human-name>
-arch-lens change apply-model <id>
-```
+- 计算 `C -> D`，只写入或删除实际差异；
+- 无差异时成功返回 `applied: []`；
+- 未修订图不需要 overlay；
+- 全部写入使用原子目录替换；
+- 成功后清理候选 overlay、候选 SVG 和对应预览缓存。
 
-`apply-model` 原子提升 `.puml`，删除操作移除 canonical `.puml`，清理候选 `diagrams/`、`rendered/` 和可清理的 canonical SVG 缓存。它不读取 Git，也不要求 model-only commit。
+apply 后若仅修改 proposal/decisions，只需重新 design approval。若修改图，可保留原 operation 字段，只需写 present overlay；未修订图复用历史 approval 绑定的 canonical。整组重新审查并批准后再次 apply。
 
-### apply-model 后修订
+delete 在 apply 后不可逆。产品不提供 trash、tombstone 或恢复命令；用户若自行保留字节，可重新提交 present overlay，但不承诺自动恢复。
 
-- 仅 `principles.md` 或提案文字变化：确认内容后运行 `change refresh-baseline <id>`，再重新记录 design approval。图未变化时可复用已有视觉证据。
-- 图内容变化：在 Change Pack 写入 `modify` overlay；基线 stale 时先 `change refresh-baseline <id>`，再 `change render <id>`，逐图得到 `PASS`，重新记录 design approval，最后再次运行 `change apply-model <id>`。
-- 不得通过伪造 `delete` 声明、直接改写 canonical、并行新 Pack 或提前归档绕过该路径。
+## 完成批准与归档
 
-## 完成批准
-
-完成批准要求：
-
-- design approval current；
-- tasks.md 全部完成；
-- proposal 中全部 AC 在 verification.md 为 PASS；
-- semantic-review 显式为 pass；
-- verification.md 绑定当前 designDigest。
+完成批准要求 design approval current、tasks 全部完成、全部 AC 为 PASS、`semantic-review=pass`，且 verification 绑定当前 designDigest。
 
 ```sh
 arch-lens change record-approval <id> --stage completion --reviewer <human-name>
+arch-lens change archive <id>
 ```
 
-completion approval 只绑定内容摘要和人工审查者。代码提交身份、实现 patch-id、Git 祖先关系或 clean worktree 均不属于协议门禁。
+completion 只绑定内容摘要和人工审查者；代码提交身份、patch-id、Git 祖先关系和 clean worktree 均不属于协议。
 
 ## 命令语义
 
@@ -107,9 +94,4 @@ arch-lens change evidence <id>
 arch-lens change archive <id>
 ```
 
-- `status`/`validate`/`evidence` 只报告本地内容事实，不读取 Git。
-- `diff` 比较 canonical 文本与候选 overlay，不落盘。
-- `render` 使用锁定受管 PlantUML 刷新候选 SVG 审查材料。
-- `record-approval` 只记录当前会话中人类已经作出的决定，不自行判断或批准。
-- `archive` 在 completion approval current 时原子移动 Change Pack。
-- 已删除的 `archive-evidence` 和 Git/patch-id 能力不得重新进入公开接口。
+`status` / `validate` / `evidence` 只报告本地事实；`diff` 展示 outstanding `C -> D`，无差异图不进入 `files`；`render` 只在整组视觉证据不可复用时渲染；`apply-model` 幂等 reconcile。已删除的 Git/patch 命令不得重新进入公开接口。

@@ -4,10 +4,14 @@
 
 ## 0.1.0-alpha.5 - 2026-09-24
 
-- 修复 `apply-model` 后 `principles.md` 或新 candidate overlay 导致 `baselineDigest` 无法通过官方路径刷新、重批和再次 apply 的生命周期缺口。
-- `change refresh-baseline` 现在可在 `apply-model` 后使用；它仍只刷新本地内容基线并使 design approval stale，不会自动批准。
-- 设计与上一份 design approval 逐字节一致时，重新批准可复用已有视觉审查；图内容变化时仍必须 fresh SVG、逐图 PASS，并再次 `apply-model`。
-- `change status` 暴露 `pendingOverlay` 与 `svg.reused`，明确当前是否需要刷新基线或重新 render。
+- 将 Change Pack 状态收敛为 baseline、desired、approval history、canonical 四类事实；逐图 applied 与 effective operation 全部派生。
+- `apply-model` 改为幂等 reconcile：只写 `C -> D` 差异，无差异时成功 no-op，未修订图不再要求 overlay。
+- `add`/`modify` 统一表示 desired present，`delete` 表示 desired absent；旧 schema 无需迁移。
+- baseline freshness 不再受新 overlay 或整包 promoted 影响；仅 principles、未声明 canonical 和历史 approval 之外的内容变化需要 refresh。
+- proposal/decisions 变化只需重新 design approval；图变化时整组 fresh render/PASS，未变图复用历史 approval 绑定。
+- capability 以 `change-pack-v3` 替换 `change-pack-v2`；workflowProtocol、schema 和命令名不变。
+- delete 经 apply 后明确不可逆，不新增 trash、tombstone 或恢复命令。
+- 将 Change Pack 规范收敛到唯一合同；SKILL、workflows、AGENTS marker、README 和 CONTRIBUTING 只保留入口与概述。
 - 发布引用：`v0.1.0-alpha.5`。
 
 ## 0.1.0-alpha.4 - 2026-09-24

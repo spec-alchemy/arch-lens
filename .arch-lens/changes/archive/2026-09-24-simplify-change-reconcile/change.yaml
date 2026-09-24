@@ -1,0 +1,17 @@
+schemaVersion: 2
+workflowProtocol: 2
+id: simplify-change-reconcile
+baselineDigest: 257a65a0786d2fde2b697e2323bc486604f3ff9a07be2c3a8f747ceffec33957
+baselineArtifacts:
+  - path: .arch-lens/diagrams/local-first-lifecycle.activity.puml
+    sha256: 24944a4f4de0b3309d5f3780e6a1d3246b34f491f4c0436b3f5192dd90841af3
+  - path: .arch-lens/diagrams/local-first-responsibilities.component.puml
+    sha256: b22feeefc21f1b570426a79fa47ec5f81a229f6cfab3215c5472fdcc22e2ef17
+  - path: .arch-lens/diagrams/product-goals.use-case.puml
+    sha256: 0f3074fec80fd0fe515b128ca0ad6e4e9e0c14994a77c8f5bddb3f57f0cc769f
+  - path: .arch-lens/principles.md
+    sha256: fce47803e1f93d6101abdcf64ec751ab4963c3869ba4ee48e92d0a0dda82cb89
+createdAt: 2026-09-24T09:04:56.811Z
+diagrams:
+  - path: .arch-lens/diagrams/local-first-lifecycle.activity.puml
+    operation: modify

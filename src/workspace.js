@@ -94,7 +94,9 @@ function assertRecognizedChangeWorkspace(changesRoot) {
 }
 
 function agentsMarker() {
-  return `${MARKER_START}\n本项目使用 Arch Lens local-first workflowProtocol ${WORKFLOW_PROTOCOL}；Skill 负责业务建模与语义审查，CLI 只提供确定性辅助能力。\n\n- 修改建模资产前，Skill 必须先执行 \`arch-lens capabilities --json\` 并确认协议兼容。\n- 每个工作区最多一个活动 Change Pack；并行变更使用独立工作区，完成后逐个整合。\n- 已批准的业务模型位于 \`.arch-lens/diagrams/**/*.puml\`；未批准候选只位于对应 Change Pack 的 \`diagrams/\` overlay。\n- 持久建模默认一张主视图、通常最多三张；第四张起须逐张论证，并在生成前取得人类明确同意。\n- 标准 \`.puml\` 的批准绑定内容摘要；SVG 只是审查期间的临时派生产物，PlantUML 仍是唯一业务模型。\n- review-model 必须逐张生成并打开当前候选 SVG，检查裁切/重叠、交叉线、密度、边界和阅读顺序；任一结果不是 PASS 时不得请求设计批准。\n- 任何持久 PlantUML 变更必须进入 Change Pack，并在实现代码前获得人类设计批准和 \`change apply-model\`。\n- AI 不得自行记录设计或完成批准；实现后必须对照批准模型、代码 diff、测试和 AC 做语义审查。\n- 规范 Skill 位于 \`.agents/skills/arch-lens/\`。\n${MARKER_END}`;
+  return `${MARKER_START}
+本项目使用 Arch Lens local-first workflowProtocol ${WORKFLOW_PROTOCOL}。修改任何建模资产前，先读取并遵循项目 Skill：\`.agents/skills/arch-lens/SKILL.md\`。
+${MARKER_END}`;
 }
 
 function hasManagedMarker(file) {

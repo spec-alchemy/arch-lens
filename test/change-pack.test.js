@@ -74,7 +74,7 @@ test("local-first flow applies only PlantUML, binds completion to content and ar
   assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/rendered", `${path.basename(diagramPath, ".puml")}.svg`)), false);
   assert.equal(statusFor(cwd, id).designApproval.state, "current");
   assertJsonError(runCli(cwd, "change", "refresh-baseline", id, "--json"), /无需刷新/);
-  assertJsonError(runCli(cwd, "change", "render", id, "--json"), /没有新的候选 overlay/);
+  assert.deepEqual(assertJsonSuccess(runCli(cwd, "change", "render", id, "--json")).rendered, []);
 
   fs.writeFileSync(path.join(root, "tasks.md"), "# Implementation Tasks\n\n- [x] T001 [AC-001] Implement the local workflow.\n");
   fs.writeFileSync(path.join(root, "verification.md"), `# Implementation Verification
@@ -152,7 +152,7 @@ test("refresh-baseline after apply-model reopens design and reuses evidence for 
 
   const refreshed = assertJsonSuccess(runCli(cwd, "change", "refresh-baseline", id, "--json"));
   assert.equal(refreshed.modelApplied, true);
-  assert.deepEqual(refreshed.changedBaselinePaths, [".arch-lens/principles.md"]);
+  assert.deepEqual(refreshed.changedBaselinePaths, [".arch-lens/diagrams/local-flow.puml", ".arch-lens/principles.md"]);
   assert.equal(statusFor(cwd, id).baseline.state, "current");
   assert.equal(statusFor(cwd, id).designApproval.state, "stale");
   assert.equal(statusFor(cwd, id).svg.reused, true);
@@ -165,7 +165,7 @@ test("refresh-baseline after apply-model reopens design and reuses evidence for 
   assert.deepEqual(fs.readFileSync(canonicalPath), canonicalBefore);
 });
 
-test("diagram changes after apply-model still require fresh SVG and a second apply", () => {
+test("diagram changes after apply-model reuse unchanged canonical and require a second apply", () => {
   const cwd = tempDir();
   const { id, diagramPath } = prepareCandidate(cwd, "diagram-after-apply");
   const root = packRoot(cwd, id);
@@ -173,30 +173,167 @@ test("diagram changes after apply-model still require fresh SVG and a second app
   assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json"));
   assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
 
-  const manifestFile = path.join(root, "change.yaml");
-  const manifest = parse(fs.readFileSync(manifestFile, "utf8"));
-  manifest.diagrams = [{ path: diagramPath, operation: "modify" }];
-  fs.writeFileSync(manifestFile, stringify(manifest, { lineWidth: 0 }));
   writeCandidate(cwd, id, "local-flow.puml", "class RevisedCandidate");
 
   const stale = statusFor(cwd, id);
-  assert.equal(stale.baseline.state, "stale");
+  assert.equal(stale.baseline.state, "current");
   assert.equal(stale.pendingOverlay, true);
-  assertJsonSuccess(runCli(cwd, "change", "refresh-baseline", id, "--json"));
-  assert.equal(statusFor(cwd, id).baseline.state, "current");
+  assert.equal(stale.designApproval.modelApplied, false);
+  assertJsonError(runCli(cwd, "change", "refresh-baseline", id, "--json"), /无需刷新/);
 
+  assertJsonError(runCli(cwd, "change", "apply-model", id, "--json"), /只有当前有效的 design approval/);
   const denied = runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json");
   assertJsonError(denied, /尚不满足设计批准的机械前置条件/);
   assert.ok(parseJson(denied).diagnostics.some((item) => item.code === "SVG_MISSING"));
 
   assertJsonSuccess(runCli(cwd, "change", "render", id, "--json"));
   assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json"));
-  assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
+  const applied = assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
+  assert.deepEqual(applied.applied, [{ path: diagramPath, operation: "modify" }]);
   assert.match(fs.readFileSync(path.join(cwd, diagramPath), "utf8"), /class RevisedCandidate/);
   assert.equal(statusFor(cwd, id).designApproval.state, "current");
   assert.equal(statusFor(cwd, id).designApproval.modelApplied, true);
 });
 
+test("multi-diagram partial revision reconciles only changed canonical bytes and is idempotent", () => {
+  const cwd = tempDir();
+  initWorkspace(cwd);
+  completePrinciples(cwd);
+  assertJsonSuccess(runCli(cwd, "change", "new", "partial-reconcile", "--json"));
+  const id = "partial-reconcile";
+  const root = packRoot(cwd, id);
+  const first = ".arch-lens/diagrams/first.puml";
+  const second = ".arch-lens/diagrams/second.puml";
+  writeCandidate(cwd, id, "first.puml", "class First");
+  writeCandidate(cwd, id, "second.puml", "class Second");
+  const manifestFile = path.join(root, "change.yaml");
+  const manifest = parse(fs.readFileSync(manifestFile, "utf8"));
+  manifest.diagrams = [
+    { path: first, operation: "add" },
+    { path: second, operation: "add" }
+  ];
+  fs.writeFileSync(manifestFile, stringify(manifest, { lineWidth: 0 }));
+  completeProposal(path.join(root, "proposal.md"), id);
+  completeDecisions(path.join(root, "decisions.md"), first);
+  fs.appendFileSync(path.join(root, "decisions.md"), `- ${second}: PASS - Opened the current rendered SVG and reviewed layout, clipping, density, boundaries, and reading order.\n`);
+  completeTasks(path.join(root, "tasks.md"));
+
+  assertJsonSuccess(runCli(cwd, "change", "render", id, "--json"));
+  assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json"));
+  const firstApply = assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
+  assert.deepEqual(firstApply.applied, [
+    { path: first, operation: "add" },
+    { path: second, operation: "add" }
+  ]);
+
+  writeCandidate(cwd, id, "first.puml", "class FirstRevised");
+  const revised = statusFor(cwd, id);
+  assert.equal(revised.baseline.state, "current");
+  assert.equal(revised.pendingOverlay, true);
+  assert.equal(revised.designApproval.modelApplied, false);
+  assertJsonError(runCli(cwd, "change", "refresh-baseline", id, "--json"), /无需刷新/);
+
+  const rendered = assertJsonSuccess(runCli(cwd, "change", "render", id, "--json"));
+  assert.equal(rendered.rendered.length, 2);
+  assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json"));
+  const secondApply = assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
+  assert.deepEqual(secondApply.applied, [{ path: first, operation: "modify" }]);
+  assert.match(fs.readFileSync(path.join(cwd, first), "utf8"), /class FirstRevised/);
+  assert.match(fs.readFileSync(path.join(cwd, second), "utf8"), /class Second/);
+
+  const noOp = assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
+  assert.deepEqual(noOp.applied, []);
+  const noOpRender = assertJsonSuccess(runCli(cwd, "change", "render", id, "--json"));
+  assert.deepEqual(noOpRender.rendered, []);
+  const noDiff = assertJsonSuccess(runCli(cwd, "change", "diff", id, "--json"));
+  assert.deepEqual(noDiff.files, []);
+  assert.equal(noDiff.patch, "");
+});
+
+test("proposal-only revision re-approves without refresh and apply remains a no-op", () => {
+  const cwd = tempDir();
+  const { id, diagramPath } = prepareCandidate(cwd, "proposal-only");
+  const root = packRoot(cwd, id);
+  assertJsonSuccess(runCli(cwd, "change", "render", id, "--json"));
+  assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json"));
+  assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
+  const canonicalBefore = fs.readFileSync(path.join(cwd, diagramPath));
+
+  fs.appendFileSync(path.join(root, "proposal.md"), "\nAdditional rationale.\n");
+  assert.equal(statusFor(cwd, id).baseline.state, "current");
+  assert.equal(statusFor(cwd, id).designApproval.state, "stale");
+  assertJsonError(runCli(cwd, "change", "refresh-baseline", id, "--json"), /无需刷新/);
+  const rendered = assertJsonSuccess(runCli(cwd, "change", "render", id, "--json"));
+  assert.deepEqual(rendered.rendered, []);
+  assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json"));
+  const applied = assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
+  assert.deepEqual(applied.applied, []);
+  assert.deepEqual(fs.readFileSync(path.join(cwd, diagramPath)), canonicalBefore);
+});
+
+test("unresolved desired, unknown operation, duplicate path and symlink candidates fail before apply", () => {
+  const unresolved = tempDir();
+  initWorkspace(unresolved);
+  assertJsonSuccess(runCli(unresolved, "change", "new", "unresolved", "--json"));
+  const unresolvedRoot = packRoot(unresolved, "unresolved");
+  const unresolvedManifest = parse(fs.readFileSync(path.join(unresolvedRoot, "change.yaml"), "utf8"));
+  unresolvedManifest.diagrams = [{ path: ".arch-lens/diagrams/missing.puml", operation: "add" }];
+  fs.writeFileSync(path.join(unresolvedRoot, "change.yaml"), stringify(unresolvedManifest, { lineWidth: 0 }));
+  const unresolvedStatus = assertJsonSuccess(runCli(unresolved, "change", "status", "unresolved", "--json"));
+  assert.ok(unresolvedStatus.diagnostics.some((item) => item.code === "DIAGRAM_DESIRED_UNRESOLVED"));
+  assertJsonError(runCli(unresolved, "change", "apply-model", "unresolved", "--json"), /结构或文件事实错误/);
+
+  const duplicate = tempDir();
+  initWorkspace(duplicate);
+  assertJsonSuccess(runCli(duplicate, "change", "new", "duplicate", "--json"));
+  const duplicateRoot = packRoot(duplicate, "duplicate");
+  const duplicateManifest = parse(fs.readFileSync(path.join(duplicateRoot, "change.yaml"), "utf8"));
+  const duplicatePath = ".arch-lens/diagrams/duplicate.puml";
+  writeCandidate(duplicate, "duplicate", "duplicate.puml", "class Duplicate");
+  duplicateManifest.diagrams = [{ path: duplicatePath, operation: "add" }, { path: duplicatePath, operation: "modify" }];
+  fs.writeFileSync(path.join(duplicateRoot, "change.yaml"), stringify(duplicateManifest, { lineWidth: 0 }));
+  const duplicateError = assertJsonError(runCli(duplicate, "change", "validate", "duplicate", "--json"), /校验失败/);
+  assert.ok(duplicateError.diagnostics.some((item) => item.code === "DIAGRAM_DUPLICATE"));
+
+  const unknown = tempDir();
+  initWorkspace(unknown);
+  assertJsonSuccess(runCli(unknown, "change", "new", "unknown", "--json"));
+  const unknownRoot = packRoot(unknown, "unknown");
+  const unknownManifest = parse(fs.readFileSync(path.join(unknownRoot, "change.yaml"), "utf8"));
+  unknownManifest.diagrams = [{ path: ".arch-lens/diagrams/unknown.puml", operation: "promote" }];
+  fs.writeFileSync(path.join(unknownRoot, "change.yaml"), stringify(unknownManifest, { lineWidth: 0 }));
+  const unknownError = assertJsonError(runCli(unknown, "change", "validate", "unknown", "--json"), /校验失败/);
+  assert.ok(unknownError.diagnostics.some((item) => item.code === "DIAGRAM_OPERATION_INVALID"));
+
+  const linked = tempDir();
+  initWorkspace(linked);
+  assertJsonSuccess(runCli(linked, "change", "new", "symlinked", "--json"));
+  const linkedRoot = packRoot(linked, "symlinked");
+  const external = path.join(tempDir(), "external.puml");
+  fs.writeFileSync(external, "@startuml\n' arch-lens: type=domain\n' arch-lens: question=状态如何演进？\ntitle external\nclass External\n@enduml\n");
+  fs.mkdirSync(path.join(linkedRoot, "diagrams"), { recursive: true });
+  fs.symlinkSync(external, path.join(linkedRoot, "diagrams", "linked.puml"));
+  const linkedManifest = parse(fs.readFileSync(path.join(linkedRoot, "change.yaml"), "utf8"));
+  linkedManifest.diagrams = [{ path: ".arch-lens/diagrams/linked.puml", operation: "add" }];
+  fs.writeFileSync(path.join(linkedRoot, "change.yaml"), stringify(linkedManifest, { lineWidth: 0 }));
+  const linkedError = assertJsonError(runCli(linked, "change", "validate", "symlinked", "--json"), /校验失败/);
+  assert.ok(linkedError.diagnostics.some((item) => item.code === "ARTIFACT_SYMLINK" || item.code === "DIAGRAM_SYMLINK"));
+});
+
+test("declared canonical third content is stale and blocks apply without approval", () => {
+  const cwd = tempDir();
+  const { id, diagramPath } = prepareCandidate(cwd, "declared-drift");
+  assertJsonSuccess(runCli(cwd, "change", "render", id, "--json"));
+  assertJsonSuccess(runCli(cwd, "change", "record-approval", id, "--stage", "design", "--reviewer", "BeaconSage", "--json"));
+  assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
+
+  fs.writeFileSync(path.join(cwd, diagramPath), "@startuml\n' arch-lens: type=domain\n' arch-lens: question=状态如何演进？\ntitle local-flow.puml\nclass ExternalThirdContent\n@enduml\n");
+  const stale = statusFor(cwd, id);
+  assert.equal(stale.baseline.state, "stale");
+  assert.equal(stale.designApproval.state, "stale");
+  assert.ok(stale.diagnostics.some((item) => item.code === "MODEL_BASELINE_STALE"));
+  assertJsonError(runCli(cwd, "change", "apply-model", id, "--json"), /结构或文件事实错误/);
+});
 test("delete operations remove canonical .puml and preserve Git independence", () => {
   const cwd = tempDir();
   writeDiagram(cwd, "obsolete.puml", "class Obsolete");
@@ -211,6 +348,10 @@ test("delete operations remove canonical .puml and preserve Git independence", (
   assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
   assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/obsolete.puml")), false);
   assert.equal(fs.existsSync(path.join(cwd, diagramPath)), true);
+  const repeated = assertJsonSuccess(runCli(cwd, "change", "apply-model", id, "--json"));
+  assert.deepEqual(repeated.applied, []);
+  assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/diagrams/obsolete.puml")), false);
+  assert.equal(statusFor(cwd, id).designApproval.modelApplied, true);
 });
 
 test("template and public commands reject Git-era verification fields", () => {

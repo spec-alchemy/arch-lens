@@ -19,9 +19,8 @@ test("公开基线只呈现当前产品入口并保留合法历史归档", () =>
   assert.match(principles, /## Responsibility Boundary/);
   assert.match(principles, /## Quality Gates/);
   assert.doesNotMatch(principles, /TODO/);
-  assert.doesNotMatch(principles, /model-only commit|implementation-commit|implementation-patch-id|baseCommit|受版本控制|标准 SVG|\bGit\b/);
-  assert.match(principles, /baselineDigest.*designDigest.*completionDigest/s);
-  assert.match(principles, /fresh 候选 SVG/);
+  assert.doesNotMatch(principles, /model-only commit|implementation-commit|implementation-patch-id|baseCommit|受版本控制|标准 SVG/);
+  assert.doesNotMatch(principles, /workflowProtocol|change-pack-v|baselineDigest|designDigest|completionDigest|fresh 候选 SVG|review-model|apply-model/);
 
   assert.ok(archiveEntries.includes(".gitkeep"));
   assert.ok(archiveEntries.every((entry) => entry === ".gitkeep" || /^\d{4}-\d{2}-\d{2}-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(entry)));
@@ -30,6 +29,8 @@ test("公开基线只呈现当前产品入口并保留合法历史归档", () =>
   }
   assert.doesNotMatch(readme, /XMI|Viewer|bundle|architecture\.uml|change review|change approve|change verify/);
   assert.match(readme, /RELEASING\.md/);
+  assert.match(readme, /change-pack-contract\.md/);
+  assert.doesNotMatch(readme, /fresh 候选 SVG|逐图 `PASS`|apply-model 后/);
 
   const releasing = read("RELEASING.md");
   for (const channel of ["alpha", "beta", "rc", "GA"]) assert.match(releasing, new RegExp(`\\b${channel}\\b`));

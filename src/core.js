@@ -7,7 +7,7 @@ export const SCHEMA_VERSION = 2;
 export const WORKFLOW_PROTOCOL = 2;
 export const FEATURES = Object.freeze([
   "plantuml-batch-render",
-  "change-pack-v2",
+  "change-pack-v3",
   "approval-digest-v2",
   "completion-approval-v2",
   "managed-plantuml-runtime-v1",

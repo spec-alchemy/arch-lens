@@ -91,15 +91,22 @@ export function diffChange(cwd, id) {
   const workspace = requireProtocolWorkspace(cwd);
   requireSingleActiveChange(workspace, id);
   const pack = readPack(workspace, id);
-  const validation = validatePack(workspace, pack, { plantUml: false });
+  const validation = validatePack(workspace, pack, { plantUml: false, skipSvg: true });
   if (validation.diagnostics.some(isError)) throw operationError(`Change Pack 无法生成 diff：${id}`, validation.diagnostics);
+  const states = resolveDiagramStates(workspace, pack);
   const files = [];
   let patch = "";
-  for (const item of pack.change.diagrams) {
-    const base = item.operation === "add" ? null : canonicalBytes(workspace, item.path);
-    const candidate = candidateBytes(pack, item);
-    files.push({ path: item.path, operation: item.operation, baseSha256: base ? sha256(base) : null, candidateSha256: candidate ? sha256(candidate) : null });
-    const filePatch = unifiedDiff(item.path, base, candidate);
+  for (const state of states) {
+    if (!state.effectiveOperation) continue;
+    const base = state.canonical;
+    const desired = state.desiredState === "present" ? state.desired : null;
+    files.push({
+      path: state.path,
+      operation: state.effectiveOperation,
+      baseSha256: base ? sha256(base) : null,
+      candidateSha256: desired ? sha256(desired) : null
+    });
+    const filePatch = unifiedDiff(state.path, base, desired);
     if (filePatch) patch += `${patch ? "\n" : ""}${filePatch}`;
   }
   const design = designDigest(workspace, pack);
@@ -110,18 +117,25 @@ export function renderChange(cwd, id) {
   const workspace = requireProtocolWorkspace(cwd);
   requireSingleActiveChange(workspace, id);
   const pack = readPack(workspace, id);
-  const pendingOverlay = hasCandidateOverlay(pack);
-  if (isPackPromoted(pack) && !pendingOverlay) throw new Error("候选模型已经提升，且当前没有新的候选 overlay，不能重复生成候选 SVG。");
-  const records = candidateDiagramRecords(pack);
-  const diagnostics = inspectDiagramRecords(records).diagnostics;
-  if (diagnostics.some(isError)) throw operationError("候选 PlantUML 无法生成 SVG。", diagnostics.sort(compareDiagnostics));
-  const svgs = renderDiagramRecords(workspace.root, records, diagnostics, { managedOnly: true, inspectPolicy: false });
+  const validation = validatePack(workspace, pack, { plantUml: false, skipSvg: true });
+  if (validation.diagnostics.some(isError)) throw operationError("候选 PlantUML 无法准备视觉审查。", validation.diagnostics);
+  const states = resolveDiagramStates(workspace, pack);
   const output = pack.renderedRoot;
   assertNoSymlinkPath(pack.root, output, `Change Pack ${id} rendered 目录`);
+
+  if (canReuseVisualEvidence(pack, states)) {
+    fs.rmSync(output, { recursive: true, force: true });
+    return { id, output: relativePosix(workspace.root, output), rendered: [], source: desiredDiagramRecords(workspace, states).map((record) => inspectDiagramRecords([record]).facts[0]), svg: [], diagnostics: [] };
+  }
+
+  const records = desiredDiagramRecords(workspace, states);
+  const diagnostics = inspectDiagramRecords(records).diagnostics;
+  if (diagnostics.some(isError)) throw operationError("候选 PlantUML 无法生成 SVG。", diagnostics.sort(compareDiagnostics));
   if (records.length === 0) {
     fs.rmSync(output, { recursive: true, force: true });
-    return { id, output: relativePosix(workspace.root, output), rendered: [], source: inspectDiagramRecords(records).facts, svg: [], diagnostics };
+    return { id, output: relativePosix(workspace.root, output), rendered: [], source: [], svg: [], diagnostics };
   }
+  const svgs = renderDiagramRecords(workspace.root, records, diagnostics, { managedOnly: true, inspectPolicy: false });
   replaceDirectoryAtomically(output, (temporary) => {
     records.forEach((record, index) => writeTreeFile(temporary, diagramRelative(record.path).replace(/\.puml$/i, ".svg"), svgs[index]));
   });
@@ -143,22 +157,20 @@ export function refreshBaseline(cwd, id) {
   const workspace = requireProtocolWorkspace(cwd);
   requireSingleActiveChange(workspace, id);
   const pack = readPack(workspace, id);
-  const promoted = isPackPromoted(pack);
-  const pendingOverlay = hasCandidateOverlay(pack);
   const next = baselineSnapshot(workspace);
-  const freshness = baselineFreshness(workspace, pack, promoted, next, pendingOverlay);
-  if (freshness.state === "current") {
-    throw new Error(promoted
-      ? "候选模型已提升，当前基线相对本次变更没有外部内容变化，无需刷新。"
-      : "baselineDigest 已经与当前 principles 和 canonical .puml 一致，无需刷新。");
-  }
+  const freshness = baselineFreshness(workspace, pack, next);
+  if (freshness.state === "invalid") throw new Error(freshness.message);
+  if (freshness.state === "current") throw new Error("baselineDigest 已经与当前 principles、canonical .puml 和历史 design approval 一致，无需刷新。");
   const previousBaselineDigest = pack.change?.baselineDigest ?? null;
-  const declared = new Set((pack.change?.diagrams ?? []).map((item) => item?.path));
-  const changedBaselinePaths = pendingOverlay
-    ? freshness.changedPaths
-    : freshness.changedPaths.filter((file) => !promoted || !declared.has(file));
   atomicWrite(pack.paths.change, stringifyYaml({ ...pack.change, baselineDigest: next.digest, baselineArtifacts: next.artifacts }, { lineWidth: 0 }));
-  return { id, previousBaselineDigest, baselineDigest: next.digest, changedBaselinePaths, modelApplied: promoted, designApproval: "stale" };
+  return {
+    id,
+    previousBaselineDigest,
+    baselineDigest: next.digest,
+    changedBaselinePaths: freshness.changedPaths,
+    modelApplied: allApplied(resolveDiagramStates(workspace, pack)),
+    designApproval: "stale"
+  };
 }
 
 export function applyModel(cwd, id) {
@@ -168,14 +180,12 @@ export function applyModel(cwd, id) {
   const status = statusForPack(workspace, pack);
   if (!status.structurallyValid) throw operationError("Change Pack 存在结构或文件事实错误，不能提升候选模型。", status.diagnostics);
   if (status.designApproval.state !== "current") throw new Error("只有当前有效的 design approval 才能提升候选模型。");
-  if (isPackPromoted(pack)) throw new Error("当前 Change Pack 的候选模型已经提升。无需重复执行 apply-model。");
-  const missingCandidates = pack.change.diagrams.filter((item) => item.operation !== "delete" && !isRealFile(candidatePath(pack, item))).map((item) => item.path);
-  if (missingCandidates.length > 0) throw new Error(`候选 overlay 不完整，无法提升：${missingCandidates.join("、")}`);
-
-  applyModelAtomically(workspace, pack);
+  const states = resolveDiagramStates(workspace, pack);
+  const applied = states.filter((state) => state.effectiveOperation).map((state) => ({ path: state.path, operation: state.effectiveOperation }));
+  applyModelAtomically(workspace, pack, states);
   const current = statusForPack(workspace, readPack(workspace, id));
   if (current.designApproval.state !== "current") throw new Error("候选提升后设计摘要不一致；请检查工作区。");
-  return { id, applied: pack.change.diagrams.map(({ path: diagramPath, operation }) => ({ path: diagramPath, operation })), designDigest: current.designApproval.digest };
+  return { id, applied, designDigest: current.designApproval.digest };
 }
 
 export function recordApproval(cwd, id, stage, reviewer) {
@@ -253,18 +263,18 @@ function validatePack(workspace, pack, options = {}) {
   const diagnostics = [...pack.diagnostics];
   validateManifest(workspace, pack, diagnostics);
   diagnostics.push(...validateApprovalValue(pack.approval, pack.relative.approval));
-  validateMarkdown(pack, diagnostics, options.gate);
-  const promoted = isPackPromoted(pack);
-  const baseline = baselineFreshness(workspace, pack, promoted, null, hasCandidateOverlay(pack));
+  const states = resolveDiagramStates(workspace, pack, { diagnostics });
+  validateMarkdown(pack, diagnostics, options.gate, states);
+  const baseline = baselineFreshness(workspace, pack);
   if (baseline.state === "stale") diagnostics.push(diag("MODEL_BASELINE_STALE", pack.relative.change, baseline.message));
-  const records = candidateDiagramRecords(pack);
+  const records = desiredDiagramRecords(workspace, states);
   const diagramValidation = validateDiagramRecordsWithFacts(workspace.root, records, { syntax: options.plantUml === true && !diagnostics.some(isError) });
   if (!diagnostics.some(isError)) diagnostics.push(...diagramValidation.diagnostics);
 
-  const reusableVisualEvidence = canReuseVisualEvidence(pack, records);
+  const reusableVisualEvidence = canReuseVisualEvidence(pack, states);
   const reuseVisualEvidence = options.gate === "design" && reusableVisualEvidence;
   let svg = { checked: false, valid: null, files: [], reused: reusableVisualEvidence };
-  if (!diagnostics.some(isError) && ((options.gate === "design" && !reuseVisualEvidence) || fs.existsSync(pack.renderedRoot))) {
+  if (!options.skipSvg && !diagnostics.some(isError) && ((options.gate === "design" && !reuseVisualEvidence) || fs.existsSync(pack.renderedRoot))) {
     const candidateMirror = validateSvgMirror(workspace.root, records.map((record) => ({
       ...record,
       svgFile: candidateSvgPath(pack, { path: record.path })
@@ -282,7 +292,7 @@ function validatePack(workspace, pack, options = {}) {
     openQuestions: parseOpenQuestions(pack.text.proposal),
     tasks: taskSummary(parseTasks(pack.text.tasks)),
     acceptance: verificationSummary(parseVerification(pack.text.verification), parseAcceptanceCriteria(pack.text.proposal)),
-    visualReview: visualReviewSummary(parseVisualReviews(pack.text.decisions), pack.change?.diagrams ?? []),
+    visualReview: visualReviewSummary(parseVisualReviews(pack.text.decisions), states),
     diagnostics: diagnostics.sort(compareDiagnostics)
   };
 }
@@ -310,29 +320,10 @@ function validateManifest(workspace, pack, diagnostics) {
     if (!OPERATIONS.has(item.operation)) diagnostics.push(diag("DIAGRAM_OPERATION_INVALID", file, "operation 必须为 add、modify 或 delete。"));
     if (seen.has(item.path)) diagnostics.push(diag("DIAGRAM_DUPLICATE", file, `重复声明图路径：${item.path}`));
     seen.add(item.path);
-    if (!validDiagramPath(item.path) || !OPERATIONS.has(item.operation)) return;
-    validateDiagramOperation(workspace, pack, item, file, diagnostics);
   });
 }
 
-function validateDiagramOperation(workspace, pack, item, file, diagnostics) {
-  const overlayPath = candidatePath(pack, item);
-  let overlayExists = isRealFile(overlayPath);
-  if (overlayExists) {
-    try { assertNoSymlinkPath(pack.diagramsRoot, overlayPath, item.path); }
-    catch (error) { diagnostics.push(diag("DIAGRAM_SYMLINK", file, error.message)); overlayExists = false; }
-  }
-  const overlay = overlayExists ? fs.readFileSync(overlayPath) : null;
-  const canonical = canonicalBytes(workspace, item.path);
-  const promoted = !overlayExists && approvalBindsCandidate(pack, item, canonical);
-  const correct = item.operation === "add" ? ((!!overlay && !canonical) || (promoted && !!canonical))
-    : item.operation === "modify" ? ((!!overlay && !!canonical && !canonical.equals(overlay)) || (promoted && !!canonical))
-      : item.operation === "delete" ? ((!overlay && !!canonical) || (promoted && !canonical))
-        : false;
-  if (!correct) diagnostics.push(diag("DIAGRAM_OPERATION_MISMATCH", file, `${item.operation} 与 canonical、候选 overlay 和已批准内容摘要不一致：${item.path}`));
-}
-
-function validateMarkdown(pack, diagnostics, gate) {
+function validateMarkdown(pack, diagnostics, gate, diagramStates) {
   requireHeadings(pack.text.proposal, ["Problem And Evidence", "Goals", "Non-goals", "Acceptance Criteria", "Assumptions", "Open Questions"], pack.relative.proposal, diagnostics);
   requireHeadings(pack.text.decisions, ["Context", "Decision", "Alternatives", "Consequences"], pack.relative.decisions, diagnostics, 3);
   requireHeadings(pack.text.verification, ["Evidence", "Acceptance Results", "Semantic Review", "Residual Risks"], pack.relative.verification, diagnostics);
@@ -352,9 +343,9 @@ function validateMarkdown(pack, diagnostics, gate) {
   reportDuplicateIds(verification.acceptanceResults.map((item) => item.id), "VERIFICATION_AC_DUPLICATE", pack.relative.verification, diagnostics);
   for (const result of verification.acceptanceResults) if (!criterionSet.has(result.id)) diagnostics.push(diag("VERIFICATION_AC_UNKNOWN", pack.relative.verification, `verification.md 引用了不存在的 ${result.id}。`));
   const visualReviews = parseVisualReviews(pack.text.decisions);
-  const declaredVisualPaths = new Set((pack.change?.diagrams ?? []).filter((item) => item?.operation !== "delete" && validDiagramPath(item?.path)).map((item) => item.path));
+  const declaredVisualPaths = new Set(diagramStates.filter((state) => state.valid && state.desiredState === "present").map((state) => state.path));
   reportDuplicateIds(visualReviews.map((item) => item.path), "VISUAL_REVIEW_DUPLICATE", pack.relative.decisions, diagnostics);
-  for (const review of visualReviews) if (!declaredVisualPaths.has(review.path)) diagnostics.push(diag("VISUAL_REVIEW_UNKNOWN", pack.relative.decisions, `视觉审查引用了未声明的 add/modify 图：${review.path}`));
+  for (const review of visualReviews) if (!declaredVisualPaths.has(review.path)) diagnostics.push(diag("VISUAL_REVIEW_UNKNOWN", pack.relative.decisions, `视觉审查引用了未声明为 desired present 的图：${review.path}`));
   if (gate === "design") {
     for (const [file, source] of [[PRINCIPLES_RELATIVE_PATH, fs.readFileSync(pack.workspace.principlesPath, "utf8")], [pack.relative.proposal, pack.text.proposal], [pack.relative.decisions, pack.text.decisions], [pack.relative.tasks, pack.text.tasks]]) {
       if (source.includes("[TODO")) diagnostics.push(diag("PLACEHOLDER_REMAINING", file, "设计批准前必须清除所有 [TODO] 占位内容。"));
@@ -381,7 +372,7 @@ function statusForPack(workspace, pack) {
   const design = pack.change ? designDigest(workspace, pack) : { digest: null };
   const approval = safeApproval(pack);
   const designRecord = approval.design.at(-1) ?? null;
-  const modelApplied = isPackPromoted(pack);
+  const modelApplied = allApplied(resolveDiagramStates(workspace, pack));
   const pendingOverlay = hasCandidateOverlay(pack);
   const matchingDigest = designRecord?.digest === design.digest ? design.digest : null;
   const designState = !designRecord ? "missing" : matchingDigest && validation.baseline.state === "current" ? "current" : "stale";
@@ -478,10 +469,9 @@ function safeApproval(pack) {
 function designDigest(workspace, pack) {
   const artifacts = [PRINCIPLES_RELATIVE_PATH, pack.relative.change, pack.relative.proposal, pack.relative.decisions]
     .map((artifactPath) => artifactRecord(workspace.root, artifactPath));
-  for (const item of pack.change?.diagrams ?? []) {
-    if (!validDiagramPath(item?.path)) continue;
-    const bytes = candidateBytes(pack, item);
-    artifacts.push({ path: item.path, sha256: bytes ? sha256(bytes) : null });
+  for (const state of resolveDiagramStates(workspace, pack)) {
+    if (!state.valid) continue;
+    artifacts.push({ path: state.path, sha256: state.desired ? sha256(state.desired) : null });
   }
   return designDigestFromArtifacts(pack.change?.baselineDigest ?? null, artifacts);
 }
@@ -493,24 +483,31 @@ function baselineSnapshot(workspace) {
   return { digest, artifacts };
 }
 
-function baselineFreshness(workspace, pack, promoted, snapshot = null, pendingOverlay = false) {
+function baselineFreshness(workspace, pack, snapshot = null) {
   if (!SHA256.test(pack.change?.baselineDigest ?? "") || !validArtifactList(pack.change?.baselineArtifacts)) {
-    return { state: "invalid", digest: null, recordedDigest: pack.change?.baselineDigest ?? null, changedPaths: [], modelApplied: promoted, message: "baselineDigest 或 baselineArtifacts 无效，无法判断模型基线 freshness。" };
+    return { state: "invalid", digest: null, recordedDigest: pack.change?.baselineDigest ?? null, changedPaths: [], modelApplied: false, message: "baselineDigest 或 baselineArtifacts 无效，无法判断模型基线 freshness。" };
   }
   const current = snapshot ?? baselineSnapshot(workspace);
   const changedPaths = compareArtifacts(pack.change.baselineArtifacts, current.artifacts);
-  const declared = new Set((pack.change.diagrams ?? []).map((item) => item?.path));
-  const externalChanges = changedPaths.filter((file) => !declared.has(file));
-  const expectedState = current.digest === pack.change.baselineDigest ? "current" : promoted && externalChanges.length === 0 && !pendingOverlay ? "current" : "stale";
+  const declared = new Set((pack.change.diagrams ?? []).filter((item) => validDiagramPath(item?.path)).map((item) => item.path));
+  const currentByPath = new Map(current.artifacts.map((item) => [item.path, item.sha256]));
+  const approvalRecords = safeApproval(pack).design;
+  const unexplainedChanges = changedPaths.filter((file) => {
+    if (file === PRINCIPLES_RELATIVE_PATH || !declared.has(file)) return true;
+    const currentSha = currentByPath.get(file) ?? null;
+    return !approvalRecords.some((record) => record.artifacts?.some((artifact) => artifact.path === file && artifact.sha256 === currentSha));
+  });
+  const expectedState = unexplainedChanges.length === 0 ? "current" : "stale";
+  const changedByPack = expectedState === "current" && changedPaths.length > 0;
   return {
     state: expectedState,
     digest: current.digest,
     recordedDigest: pack.change.baselineDigest,
     changedPaths,
-    modelApplied: promoted,
+    modelApplied: allApplied(resolveDiagramStates(workspace, pack)),
     message: expectedState === "current"
-      ? promoted ? "候选模型已按当前设计批准提升，基线变化仅限本 Change Pack 声明的图。" : "模型基线与当前 principles 和 canonical .puml 一致。"
-      : `已批准模型基线发生变化：${externalChanges.join("、") || changedPaths.join("、")}。请运行 change refresh-baseline，并重新审查设计。`
+      ? changedByPack ? "当前 canonical 变化均由本 Change Pack 的历史 design approval 解释。" : "模型基线与当前 principles 和 canonical .puml 一致。"
+      : `已批准模型基线存在未解释变化：${unexplainedChanges.join("、")}。请运行 change refresh-baseline，并重新审查设计。`
   };
 }
 
@@ -535,14 +532,64 @@ function artifactRecord(root, relative) {
   return { path: relative, sha256: bytes ? sha256(bytes) : null };
 }
 
-function candidateDiagramRecords(pack) {
-  const records = [];
-  for (const item of pack.change?.diagrams ?? []) {
-    if (!item || !OPERATIONS.has(item.operation) || item.operation === "delete") continue;
-    const bytes = candidateBytes(pack, item);
-    if (bytes) records.push({ path: item.path, content: bytes, file: candidatePath(pack, item) });
-  }
-  return records.sort((a, b) => a.path.localeCompare(b.path, "en"));
+function resolveDiagramStates(workspace, pack, { diagnostics = null } = {}) {
+  const latestApproval = safeApproval(pack).design.at(-1) ?? null;
+  return (pack.change?.diagrams ?? []).map((item, index) => {
+    const base = {
+      index,
+      item,
+      path: item?.path ?? null,
+      valid: false,
+      canonical: null,
+      overlay: null,
+      overlayFile: null,
+      desired: null,
+      desiredState: "unresolved",
+      effectiveOperation: null
+    };
+    if (!item || typeof item !== "object" || Array.isArray(item) || !validDiagramPath(item.path) || !OPERATIONS.has(item.operation)) return base;
+
+    const state = {
+      ...base,
+      valid: true,
+      path: item.path,
+      canonical: canonicalBytes(workspace, item.path)
+    };
+    if (item.operation === "delete") {
+      state.desiredState = "absent";
+    } else {
+      state.overlayFile = candidatePath(pack, item);
+      state.overlay = isRealFile(state.overlayFile) ? fs.readFileSync(state.overlayFile) : null;
+      if (state.overlay) state.desiredState = "present";
+      else if (state.canonical && approvalBindsCanonical(latestApproval, item.path, state.canonical)) state.desiredState = "present";
+      if (state.desiredState === "present") state.desired = state.overlay ?? state.canonical;
+      if (state.desiredState === "unresolved" && diagnostics) {
+        diagnostics.push(diag("DIAGRAM_DESIRED_UNRESOLVED", pack.relative.change, `${item.path} 没有 overlay，也无法由上一份 design approval 绑定当前 canonical；无法解析 desired 内容。`));
+      }
+    }
+    state.effectiveOperation = effectiveOperation(state);
+    return state;
+  });
+}
+
+function effectiveOperation(state) {
+  if (!state.valid || state.desiredState === "unresolved") return null;
+  const desired = state.desiredState === "present" ? state.desired : null;
+  if (!state.canonical && desired) return "add";
+  if (state.canonical && !desired) return "delete";
+  if (state.canonical && desired && !state.canonical.equals(desired)) return "modify";
+  return null;
+}
+
+function allApplied(states) {
+  return states.length > 0 && states.every((state) => state.valid && state.desiredState !== "unresolved" && effectiveOperation(state) === null);
+}
+
+function desiredDiagramRecords(workspace, states) {
+  return states
+    .filter((state) => state.valid && state.desiredState === "present")
+    .map((state) => ({ path: state.path, content: state.desired, file: state.overlayFile ?? path.join(workspace.root, state.path) }))
+    .sort((a, b) => a.path.localeCompare(b.path, "en"));
 }
 
 function listActiveChangeIds(workspace) {
@@ -594,8 +641,8 @@ function parseVisualReviews(source) {
   return [...source.matchAll(/^\s*-\s+(\.arch-lens\/diagrams\/[^\s:]+\.puml):\s+(PASS|CONCERNS|FAIL)\s+-\s+\S.*$/gm)].map((match) => ({ path: match[1], status: match[2] }));
 }
 
-function visualReviewSummary(reviews, diagrams) {
-  const required = diagrams.filter((item) => item?.operation !== "delete" && validDiagramPath(item?.path)).map((item) => item.path);
+function visualReviewSummary(reviews, states) {
+  const required = states.filter((state) => state.valid && state.desiredState === "present").map((state) => state.path);
   const byPath = new Map(reviews.map((item) => [item.path, item.status]));
   return {
     pass: required.filter((diagramPath) => byPath.get(diagramPath) === "PASS").length,
@@ -664,39 +711,25 @@ function canonicalBytes(workspace, canonicalPath) {
   return isRealFile(target) ? fs.readFileSync(target) : null;
 }
 
-function candidateBytes(pack, item) {
-  if (!item || item.operation === "delete" || !validDiagramPath(item.path)) return null;
-  const overlay = candidatePath(pack, item);
-  if (isRealFile(overlay)) return fs.readFileSync(overlay);
-  return canonicalBytes(pack.workspace, item.path);
-}
-
 function hasCandidateOverlay(pack) {
   return (pack.change?.diagrams ?? []).some((item) => item && item.operation !== "delete" && isRealFile(candidatePath(pack, item)));
 }
 
-function approvalBindsCandidate(pack, item, canonical) {
-  const record = safeApproval(pack).design.at(-1);
-  const artifact = record?.artifacts?.find((entry) => entry?.path === item.path);
-  return !!artifact && artifact.sha256 === (canonical ? sha256(canonical) : null);
+function approvalBindsCanonical(record, diagramPath, canonical) {
+  return approvalArtifactSha(record, diagramPath) === (canonical ? sha256(canonical) : null);
 }
 
-function canReuseVisualEvidence(pack, records) {
-  const record = safeApproval(pack).design.at(-1);
-  if (!record) return false;
-  return records.every((candidate) => {
-    const artifact = record.artifacts?.find((entry) => entry?.path === candidate.path);
-    return !!artifact && artifact.sha256 === sha256(candidate.content);
-  });
+function approvalArtifactSha(record, diagramPath) {
+  return record?.artifacts?.find((entry) => entry?.path === diagramPath)?.sha256 ?? null;
 }
 
-function isPackPromoted(pack) {
-  const changed = pack.change?.diagrams ?? [];
-  if (changed.length === 0) return false;
-  return changed.every((item) => {
-    const canonical = canonicalBytes(pack.workspace, item.path);
-    if (item.operation === "delete") return !canonical && approvalBindsCandidate(pack, item, canonical);
-    return !!canonical && approvalBindsCandidate(pack, item, canonical);
+function canReuseVisualEvidence(pack, states) {
+  const record = safeApproval(pack).design.at(-1);
+  if (!record || states.length !== (pack.change?.diagrams ?? []).length) return false;
+  return states.every((state) => {
+    if (!state.valid || state.desiredState === "unresolved") return false;
+    const desiredSha = state.desiredState === "present" ? sha256(state.desired) : null;
+    return approvalArtifactSha(record, state.path) === desiredSha;
   });
 }
 
@@ -745,7 +778,7 @@ function unifiedDiff(canonicalPath, base, candidate) {
   return `${lines.join("\n")}\n`;
 }
 
-function applyModelAtomically(workspace, pack) {
+function applyModelAtomically(workspace, pack, states) {
   const parent = path.dirname(workspace.diagramsRoot);
   const nonce = `${process.pid}.${Date.now()}`;
   const pending = path.join(parent, `.diagrams.${nonce}.tmp`);
@@ -755,13 +788,13 @@ function applyModelAtomically(workspace, pack) {
   let installed = false;
   try {
     copyTree(workspace.diagramsRoot, pending);
-    for (const item of pack.change.diagrams) {
-      const relative = diagramRelative(item.path);
-      const target = path.join(pending, relative);
-      if (item.operation === "delete") fs.rmSync(target, { force: true });
+    for (const state of states) {
+      if (!state.effectiveOperation) continue;
+      const target = path.join(pending, diagramRelative(state.path));
+      if (state.effectiveOperation === "delete") fs.rmSync(target, { force: true });
       else {
         fs.mkdirSync(path.dirname(target), { recursive: true });
-        fs.copyFileSync(candidatePath(pack, item), target);
+        fs.writeFileSync(target, state.desired);
       }
     }
     pruneEmptyDirectories(pending);
@@ -783,7 +816,10 @@ function applyModelAtomically(workspace, pack) {
   fs.rmSync(backup, { recursive: true, force: true });
   fs.rmSync(pack.diagramsRoot, { recursive: true, force: true });
   fs.rmSync(pack.renderedRoot, { recursive: true, force: true });
-  for (const item of pack.change.diagrams) fs.rmSync(path.join(workspace.root, RENDERED_RELATIVE_PATH, diagramRelative(item.path).replace(/\.puml$/i, ".svg")), { force: true });
+  for (const state of states) {
+    if (!state.valid) continue;
+    fs.rmSync(path.join(workspace.root, RENDERED_RELATIVE_PATH, diagramRelative(state.path).replace(/\.puml$/i, ".svg")), { force: true });
+  }
 }
 
 function copyTree(source, target) {

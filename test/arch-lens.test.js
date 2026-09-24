@@ -26,7 +26,7 @@ test("CLI exposes protocol 2 local-first commands and no Git-specific surface", 
     workflowProtocol: 2,
     features: [
       "plantuml-batch-render",
-      "change-pack-v2",
+      "change-pack-v3",
       "approval-digest-v2",
       "completion-approval-v2",
       "managed-plantuml-runtime-v1",
@@ -54,7 +54,14 @@ test("init works in a non-Git directory, is idempotent and does not create .giti
   assert.equal(fs.existsSync(path.join(cwd, ".arch-lens/changes/archive/.gitkeep")), true);
   assert.equal(fs.existsSync(path.join(cwd, ".agents/skills/arch-lens/SKILL.md")), true);
   assert.match(fs.readFileSync(path.join(cwd, "AGENTS.md"), "utf8"), /^# Existing\n\nPreserve me\./);
-  assert.match(fs.readFileSync(path.join(cwd, "AGENTS.md"), "utf8"), /local-first workflowProtocol 2/);
+  const agents = fs.readFileSync(path.join(cwd, "AGENTS.md"), "utf8");
+  assert.match(agents, /local-first workflowProtocol 2/);
+  assert.match(agents, /\.agents\/skills\/arch-lens\/SKILL\.md/);
+  assert.doesNotMatch(agents, /change-pack-v|review-model|apply-model|designDigest|visual-review/);
+  assert.deepEqual(
+    fs.readFileSync(path.join(cwd, ".agents/skills/arch-lens/SKILL.md")),
+    fs.readFileSync(path.join(root, ".agents/skills/arch-lens/SKILL.md"))
+  );
 
   fs.writeFileSync(path.join(cwd, ".arch-lens/principles.md"), "# Custom principles\n");
   fs.appendFileSync(path.join(cwd, ".agents/skills/arch-lens/SKILL.md"), "\nlocal customization\n");
@@ -99,7 +106,9 @@ test("install-agent resolves project scope from a nested workspace directory and
   const home = tempDir("arch-lens-home-");
   const global = runCli(cwd, "install-agent", "codex", "--global", { HOME: home });
   assert.equal(global.status, 0, global.stderr || global.stdout);
-  assert.equal(fs.existsSync(path.join(home, ".agents/skills/arch-lens/SKILL.md")), true);
+  const globalSkill = path.join(home, ".agents/skills/arch-lens/SKILL.md");
+  assert.equal(fs.existsSync(globalSkill), true);
+  assert.deepEqual(fs.readFileSync(globalSkill), fs.readFileSync(path.join(root, ".agents/skills/arch-lens/SKILL.md")));
 });
 
 test("diagram list, check and render work without a canonical SVG cache", () => {
