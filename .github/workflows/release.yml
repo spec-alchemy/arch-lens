@@ -1,4 +1,4 @@
-name: Verify and stage Arch Lens release
+name: Verify and publish Arch Lens release
 
 permissions:
   contents: read
@@ -9,33 +9,40 @@ on:
       - "v*"
   pull_request:
 
+concurrency:
+  group: arch-lens-release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "22"
           cache: npm
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6
         with:
           distribution: temurin
           java-version: "21"
       - run: npm ci
-      - name: Verify release tag matches package version
-        if: startsWith(github.ref, 'refs/tags/v')
-        run: |
-          expected="v$(node -p "require('./package.json').version")"
-          test "$GITHUB_REF_NAME" = "$expected"
-      - name: Verify release commit is current main
+      - name: Verify release tag and current main
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
           git fetch origin main --no-tags
-          test "$(git rev-parse HEAD)" = "$(git rev-parse FETCH_HEAD)"
+          TAG_COMMIT="$(git rev-parse HEAD)" MAIN_COMMIT="$(git rev-parse FETCH_HEAD)" node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { releaseForTag, assertCurrentMain } from './scripts/release-policy.mjs';
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          if (pkg.name !== '@spec-alchemy/arch-lens') throw new Error('Unexpected npm package name');
+          const release = releaseForTag(pkg.version, process.env.GITHUB_REF_NAME);
+          assertCurrentMain(process.env.TAG_COMMIT, process.env.MAIN_COMMIT);
+          console.log(`Verified ${release.tag} at current main; npm dist-tag: ${release.distTag}`);
+          NODE
       - name: Install and verify the managed PlantUML runtime
         run: node bin/arch-lens.js init --json
       - run: npm test
@@ -48,8 +55,8 @@ jobs:
           test -z "$(git status --porcelain --untracked-files=all)"
       - run: npm pack --dry-run
 
-  stage:
-    name: Stage npm package
+  publish:
+    name: Publish npm package
     if: startsWith(github.ref, 'refs/tags/v')
     needs: test
     runs-on: ubuntu-24.04
@@ -57,29 +64,82 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
           package-manager-cache: false
-      - name: Install staging-capable npm
+      - name: Install trusted-publishing-capable npm
         run: npm install --global npm@11.15.0
       - run: npm ci
-      - name: Derive npm dist-tag
+      - name: Reject already published version and set dist-tag
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { releaseForTag, ensureUnpublished } from './scripts/release-policy.mjs';
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          if (pkg.name !== '@spec-alchemy/arch-lens') throw new Error('Unexpected npm package name');
+          const release = releaseForTag(pkg.version, process.env.GITHUB_REF_NAME);
+          await ensureUnpublished(pkg.name, release.version);
+          fs.appendFileSync(process.env.GITHUB_ENV, `NPM_DIST_TAG=${release.distTag}\n`);
+          console.log(`Publishing ${pkg.name}@${release.version} under ${release.distTag}`);
+          NODE
+      - name: Publish with GitHub OIDC and provenance
+        run: npm publish --provenance --access public --tag "$NPM_DIST_TAG"
+
+  release:
+    name: Verify npm and create GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - name: Verify published version, dist-tag and provenance
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import { releaseForTag, waitForPublished } from './scripts/release-policy.mjs';
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          if (pkg.name !== '@spec-alchemy/arch-lens') throw new Error('Unexpected npm package name');
+          const release = releaseForTag(pkg.version, process.env.GITHUB_REF_NAME);
+          await waitForPublished(pkg.name, release);
+          fs.appendFileSync(process.env.GITHUB_ENV, `RELEASE_PRERELEASE=${release.prerelease}\n`);
+          console.log(`Verified ${pkg.name}@${release.version} (${release.distTag}) with provenance`);
+          NODE
+      - name: Create GitHub Release for the existing tag
         shell: bash
         run: |
-          version="$(node -p "require('./package.json').version")"
-          case "$version" in
-            *-alpha.*) tag="next" ;;
-            *-beta.*|*-rc.*) tag="beta" ;;
-            *) tag="latest" ;;
-          esac
-          echo "NPM_DIST_TAG=$tag" >> "$GITHUB_ENV"
-          echo "Staging $version with npm dist-tag: $tag"
-      - name: Stage package for maintainer approval
-        run: npm stage publish --access public --tag "$NPM_DIST_TAG"
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft,isPrerelease > "$RUNNER_TEMP/existing-release.json" 2>/dev/null; then
+            node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const existing = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/existing-release.json', 'utf8'));
+          const expectedPrerelease = process.env.RELEASE_PRERELEASE === 'true';
+          if (existing.tagName !== process.env.GITHUB_REF_NAME || existing.isDraft || existing.isPrerelease !== expectedPrerelease) {
+            throw new Error('Existing GitHub Release does not match the published npm version');
+          }
+          console.log('Matching GitHub Release already exists');
+          NODE
+            exit 0
+          fi
+          args=(--repo "$GITHUB_REPOSITORY" --verify-tag --title "Arch Lens $GITHUB_REF_NAME" --generate-notes)
+          if [[ "$RELEASE_PRERELEASE" == "true" ]]; then
+            args+=(--prerelease --latest=false)
+          else
+            args+=(--latest)
+          fi
+          gh release create "$GITHUB_REF_NAME" "${args[@]}"
 
-# CI 只验证产物并将 tag 对应版本暂存到 npm；最终发布必须由维护者使用 2FA 在 npm 端批准。
+# PRs only test. Only protected version tags can publish; final publication does not require npm stage approve.

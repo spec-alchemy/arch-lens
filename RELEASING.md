@@ -73,24 +73,22 @@
 
 ## 发布方式
 
-Arch Lens 使用 npm staged publishing，而不是 CI 直接发布：
+发布的最后一个人工动作是**从受保护的 `main` 推送版本附注 tag**。随后 `.github/workflows/release.yml` 完成门禁、OIDC 直发 npm、检查版本和 provenance、创建 GitHub Release。PR 只运行测试，不发布。没有 `NPM_TOKEN`，不进行逐版 `npm stage approve`；维护者的 npm 账户仍保留 2FA。
 
-- GitHub Actions 只在 tag 指向受保护 `main` 当前 HEAD、tag 与 `package.json` 版本一致且全部门禁通过后执行 `npm stage publish`。
-- npm Trusted Publisher 只授予 `createStagedPackage`，不授予直接发布权限；仓库和 GitHub 组织不保存 `NPM_TOKEN`。
-- OIDC 自动提供 provenance。最终发布必须由维护者在 npm 端检查 staged package，并用交互式 2FA 批准。
-- staged publishing 只把构建与批准分离，**不会降低**供应链攻击的影响；因此不得把它描述为比直接发布“更安全”，也不得放宽代码审查和 tag 控制。
-
-当前发布流程要求 Node.js 22.14+ 与 npm 11.15+。本地可通过 `npx npm@11.15.0` 使用相同版本，不需要在仓库或 shell 中长期保存 npm token。
+- GitHub 的 `v*` tag 规则只允许组织管理员创建版本 tag，并禁止任何人更新或删除既有版本 tag。当前为单维护者仓库；管理员能够管理规则，保护仍依赖账号安全和发布前审查。
+- CI 要求 tag 与 `package.json` 版本完全相同，且其 commit 仍是 `main` 当前 HEAD。只接受 `X.Y.Z-alpha.N`、`X.Y.Z-beta.N`、`X.Y.Z-rc.N` 和 `X.Y.Z`，预发布序号从 1 开始；未知通道不得落入 `latest`。
+- npm Trusted Publisher 只绑定 `spec-alchemy/arch-lens` 的 `release.yml`，启用直接 `npm publish`；仅 publish job 有 `id-token: write`。发布使用固定 npm 11.15.0、GitHub 托管运行器及 provenance，不依赖长期 npm 密钥。
+- 首次真实 OIDC 直发并核实 provenance **之后**，将该包的 npm Publishing access 设为 **Require two-factor authentication and disallow tokens**，关闭传统 token 发布旁路。设置前保留现有手工发布应急方式；此设置不影响 Trusted Publisher。不得为验证而制造空版本。
 
 ## 发布清单
 
 ### 1. 准备发布提交
 
-在受保护分支上更新 `package.json`、`CHANGELOG.md` 和适用文档，完成全部质量门禁后合入 `main`。不要提前创建 tag。
+根据上述质量门禁与观察期政策决定目标通道和版本。在 PR 中更新 `package.json`、`package-lock.json`、`CHANGELOG.md` 和必要文档，确保已归档所有在途 Change Pack，再合入受保护的 `main`。不要提前创建 tag；不要为不同通道复用版本号。
 
-### 2. 在当前受保护 main 上创建附注 tag
+### 2. 从当前 main 创建附注 tag
 
-从合并后的干净受保护 `main` 执行：
+从干净且已同步的 `main` 执行，以下以 alpha 为例；beta、rc、GA 使用相应版本号：
 
 ```sh
 git checkout main && git pull --ff-only
@@ -99,52 +97,25 @@ git tag -a vX.Y.Z-alpha.N -m "Arch Lens vX.Y.Z-alpha.N"
 git push origin vX.Y.Z-alpha.N
 ```
 
-tag 必须指向该版本的 **release prep commit**（把 `package.json` 版本号改到目标版本的那个提交），并且该提交仍必须是当前受保护 `main` 的 HEAD。工作流会同时校验 tag 名与 `package.json` 版本，以及 tag commit 是否仍等于 `origin/main`。
+tag 必须指向该版本的 **release prep commit**，同时仍为当前 `main` HEAD。版本 tag 不可移动或删除。若 tag 打错、门禁失败或 `main` 已前进，应分析原因并准备新的版本/提交；不得重写已推送 tag 或跳过门禁。
 
-### 3. 让 GitHub Actions 暂存包
+### 3. 等待 CI 正式发布与核对
 
-tag push 触发 `.github/workflows/release.yml`。`Stage npm package` job 会：
+`test` job 通过后，`publish` job 确认 npm 尚无相同版本，并执行 `npm publish --provenance --access public --tag <dist-tag>`：alpha 显式使用 `--tag next`，beta/rc 使用 `--tag beta`，GA 使用 `--tag latest`。`release` job 等待 npm 注册表显示精确版本、预期 dist-tag 和 provenance，再为原 tag 创建 GitHub Release；alpha/beta/rc 为 prerelease，GA 为正式版。
 
-1. 根据版本号推导 npm dist-tag 并显式传入 `--tag`：alpha 使用 `--tag next`，beta/rc 使用 `--tag beta`，GA 使用 `--tag latest`。
-2. 使用 GitHub OIDC 调用 `npm stage publish`，不读取任何 npm secret。
-3. 将包暂存到 npm，等待维护者批准。
-
-示例工作流输出：
-
-```text
-Staging 0.1.0-alpha.N with npm dist-tag: next
-```
-
-### 4. 检查并批准 staged package
-
-在本地检查暂存版本：
+核对 npm、provenance、GitHub Release 与 Actions 运行记录：
 
 ```sh
-npx npm@11.15.0 stage list @spec-alchemy/arch-lens
-npx npm@11.15.0 stage view <stage-id>
-npx npm@11.15.0 stage download <stage-id>
-```
-
-核对 tarball 内容、版本、dist-tag 和 provenance 后，使用交互式 2FA 批准：
-
-```sh
-npx npm@11.15.0 stage approve <stage-id>
-```
-
-如果检查失败，拒绝暂存包而不是覆盖已发布版本：
-
-```sh
-npx npm@11.15.0 stage reject <stage-id>
-```
-
-### 5. 创建 GitHub Release 并核对
-
-npm 批准成功后，为同一个 tag 创建 GitHub Release：
-
-```sh
-gh release create vX.Y.Z-alpha.N --repo spec-alchemy/arch-lens \
-  --title "Arch Lens vX.Y.Z-alpha.N" --generate-notes --prerelease
 npm view @spec-alchemy/arch-lens dist-tags --json
+npm view @spec-alchemy/arch-lens@X.Y.Z-alpha.N dist.attestations --json
+gh release view vX.Y.Z-alpha.N --repo spec-alchemy/arch-lens
+gh run list --workflow release.yml --limit 5
 ```
 
-alpha 应更新 `next`；beta/rc 应更新 `beta`；GA 应更新 `latest` 且 GitHub Release 不带 `--prerelease`。
+在 npm 的包页进一步核对 provenance 对应的仓库、工作流与提交。首次真实自动直发通过这些检查后，按上文关闭传统 token 发布渠道；不要提前关闭。
+
+### 失败恢复
+
+- 测试或 npm 发布失败、但注册表没有该版本：检查 Actions 日志、配置与 tag 状态；已推送的 tag 不改写。如需修改代码或版本，创建新的 release prep commit 和新版本 tag。
+- **npm 已发布、GitHub Release 失败**：从 Actions 页面只重试失败的 `release` job，它会重新核对 npm 后创建或确认已有 Release。不要重试整个工作流，不要再次 `npm publish` 同一版本；必要时核实 npm 元数据后手工用 `gh release create <tag> --verify-tag` 补建。
+- npm 已有同版本时，`publish` job 会拒绝重发；网络错误、注册表状态不明或 provenance 缺失也会失败而不是假定成功。先查清真实状态，不得删除/移动 tag 规避校验。
